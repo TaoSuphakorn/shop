@@ -3,7 +3,7 @@
 |         |                                       |
 | ------- | ------------------------------------- |
 | วันที่  | 2026-10-06                            |
-| สถานะ   | รออนุมัติ                             |
+| สถานะ | อนุมัติและสร้างเสร็จแล้ว (ดูข้อ 17 สำหรับจุดที่ต่างจากแบบเดิม) |
 | ผู้อ่าน | นักพัฒนาที่จะลงมือสร้างหรือรับช่วงต่อ |
 
 ## 1. เป้าหมาย
@@ -578,3 +578,33 @@ Integration test รันกับ SQL Server จริงผ่าน Testcont
 | Playwright e2e                     | เมื่อหน้าเว็บมีมากกว่าสองหน้า                                        |
 | ระบบสมาชิก                         | ต้องการประวัติการสั่งซื้อข้ามอุปกรณ์                                 |
 | CI/CD pipeline                     | เมื่อมี remote repository                                            |
+
+## 17. บันทึกจากการลงมือสร้าง
+
+จุดที่ของจริงต่างจากข้อความในข้ออื่นของเอกสารนี้ ถ้าขัดกัน ให้ยึดข้อนี้และโค้ด
+
+| เรื่อง | ของจริง | เหตุผล |
+| --- | --- | --- |
+| การล็อกตะกร้า (ข้อ 7) | `sp_getapplock` ต่อ guest ร่วมกับ `UPDLOCK, ROWLOCK` บนแถว ไม่ใช่ `UPDLOCK, HOLDLOCK` | `HOLDLOCK` บนแถวที่ยังไม่มี ทำให้สอง request แรกของ guest ใหม่ deadlock กัน app lock ให้ผลแน่นอนกว่า |
+| การลบ idempotency key ที่เก่า (ข้อ 7) | ทำโดย `IdempotencyCleanup` ใน `Shop.Shared` ทุก 10 นาที ไม่ใช่ในตัวกวาดตะกร้า | โมดูล Cart ห้ามแตะ schema `shared` ตามกฎข้อ 5.2 |
+| Outbox (ข้อ 10.2) | `IOutbox.AddAsync(key, message, ct)`; การ publish ไม่มีเพดานจำนวนครั้ง | เพดานจะทำให้ event ค้างถาวรถ้า Kafka ล่มนานเกินหนึ่งนาที |
+| การส่งต่อ `/api` ตอนไม่มี ingress (ข้อ 5.1) | ทำใน `frontend/src/proxy.ts` ตอนรับ request ไม่ใช่ `rewrites` ใน `next.config` | `rewrites` ถูกกำหนดตอน build ทำให้ image เดียวใช้กับทั้ง compose และ Kubernetes ไม่ได้ |
+| Next.js และ component (ข้อ 3, 11.3) | Next.js 16 (ไฟล์ CSP ชื่อ `proxy.ts`); shadcn/ui สร้าง component บน Base UI ไม่ใช่ Radix | เป็นสิ่งที่เครื่องมือรุ่นปัจจุบันสร้างให้ เหตุผลของ `style-src 'unsafe-inline'` ยังเหมือนเดิม |
+| Forwarded headers (ข้อ 11.5) | ถ้าไม่ตั้ง `ForwardedHeaders:KnownNetworks` API จะไม่อ่าน `X-Forwarded-For` เลย และใน docker compose ตั้งใจไม่ตั้งค่านี้ | ค่าเริ่มต้นของ ASP.NET เมื่อรายการว่างคือเชื่อทุกคน ซึ่งทำให้หลบ rate limit ได้ด้วย header ปลอม |
+| เวลา (ข้อ 6) | ทุกคอลัมน์ `DateTime` ถูกอ่านกลับเป็น UTC ผ่าน convention ใน `ModuleDbContext` | ไม่เช่นนั้น JSON ไม่มี `Z` ต่อท้าย และ browser ตีความเวลาหมดอายุผิด |
+| การสร้างฐานข้อมูล | `DbProvisioner` สร้างฐานข้อมูลเองก่อนเรียก migrate | EF สร้างผ่าน connection ที่ใช้ร่วมกันไม่ได้ |
+| การรัน (ข้อ 14) | คำสั่งเดียว: `scripts/up.ps1`; container ของแอปอยู่ใน compose profile `app`; ตอน dev ใช้ `scripts/dev-api.ps1` หรือ `.sh` และเชื่อมต่อผ่าน `127.0.0.1` | ดู `README.md` |
+| การทดสอบ (ข้อ 15) | เพิ่ม unit test: `backend/tests/Shop.UnitTests` (ไม่ต้องใช้ Docker) และ Vitest กับ React Testing Library ใน `frontend` | ผู้ใช้ขอเพิ่มระหว่างทำ |
+| pod ของ SQL Server (ข้อ 11.6) | เพิ่ม capability `NET_BIND_SERVICE` กลับเข้าไปหลัง drop ทั้งหมด | ไฟล์ `sqlservr` ต้องการ ไม่เช่นนั้นเริ่มไม่ได้ |
+| Kubernetes (ข้อ 13) | deploy และทดสอบจริงแล้ว ยกเว้น Ingress ของ Traefik และการ scale ของ HPA | เครื่องที่ใช้สร้างยังไม่มี Helm, Traefik และ metrics-server ดู `deploy/k8s/README.md` |
+
+**จำนวน test ณ วันที่ส่งมอบ:** backend unit 64, backend integration 83 (SQL Server และ Kafka จริง), frontend unit 58
+
+**ข้อจำกัดที่รู้อยู่**
+
+- สต๊อกกลับคืนหลังยกเลิกช้ากว่าหน้าจอ 1–2 วินาที เพราะเดินทางผ่าน Kafka (eventual consistency)
+- event ที่ handler ทำไม่สำเร็จ 5 ครั้งถูกส่งไป `shop.events.dlq` และต้องมีคนนำกลับมาประมวลผลเอง ยังไม่มีเครื่องมือทำให้
+- ลำดับของ event ที่มี key เดียวกันไม่รับประกันเมื่อหลาย pod ทำหน้าที่ relay พร้อมกัน ปัจจุบันมี event ชนิดเดียวจึงไม่มีผล
+- ตัวนับ rate limit ใน API แยกกันต่อ pod
+- ปิดตะกร้าด้วยปุ่ม Esc แล้ว focus ไม่กลับไปที่ปุ่มที่เปิด
+

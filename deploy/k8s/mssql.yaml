@@ -26,7 +26,10 @@ spec:
       labels: { app.kubernetes.io/name: mssql }
     spec:
       securityContext:
-        fsGroup: 10001          # the image runs as uid 10001 and must be able to write the volume
+        runAsNonRoot: true
+        runAsUser: 10001        # "mssql" in the image
+        fsGroup: 10001          # lets that user write the volume
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: mssql
           image: mcr.microsoft.com/mssql/server:2022-latest
@@ -45,7 +48,9 @@ spec:
             periodSeconds: 5
           securityContext:
             allowPrivilegeEscalation: false
-            capabilities: { drop: [ALL] }
+            # The sqlservr binary carries the NET_BIND_SERVICE file capability; without it in the
+            # bounding set the process cannot even start ("Operation not permitted").
+            capabilities: { drop: [ALL], add: [NET_BIND_SERVICE] }
           volumeMounts:
             - { name: data, mountPath: /var/opt/mssql }
   volumeClaimTemplates:

@@ -28,7 +28,10 @@ spec:
     spec:
       enableServiceLinks: false   # otherwise the injected KAFKA_PORT variable confuses the broker startup script
       securityContext:
-        fsGroup: 1000             # the image runs as uid 1000 (appuser)
+        runAsNonRoot: true
+        runAsUser: 1000           # "appuser" in the image
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: kafka
           image: apache/kafka:3.9.1

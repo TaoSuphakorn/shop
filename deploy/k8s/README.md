@@ -2,7 +2,16 @@
 
 คู่มือนี้ใช้กับ Kubernetes ของ Docker Desktop บนเครื่องนักพัฒนา สำหรับ cluster จริงดูหัวข้อ "ก่อนขึ้น production" ด้านล่าง
 
-> **สถานะการทดสอบ:** manifest ชุดนี้ผ่านการ render ด้วย `kubectl kustomize` แล้ว แต่ **ยังไม่เคยถูก deploy จริง** เพราะตอนที่เขียน เครื่องยังไม่ได้เปิด Kubernetes ระบบเดียวกันนี้ผ่านการทดสอบครบวงจรบน docker compose แล้ว ขั้นตอนตรวจผลข้อ 6 ด้านล่างคือสิ่งที่ต้องทำเมื่อ deploy ครั้งแรก
+> **สถานะการทดสอบ (2026-10-06, Kubernetes v1.36 ของ Docker Desktop)**
+>
+> | ส่วน | สถานะ |
+> |---|---|
+> | namespace, secret, mssql, kafka, migrate Job, api ×3, web ×2, PDB, NetworkPolicy | deploy จริงแล้ว ทุก pod Ready |
+> | ซื้อ ชำระเงิน ยกเลิก และสต๊อกกลับคืนผ่าน Kafka | ทดสอบแล้วผ่าน `kubectl port-forward svc/web` รวมถึงลบ pod `api` หนึ่งตัวระหว่างทำรายการ |
+> | Ingress และ Middleware ของ Traefik (TLS, rate limit, redirect) | **ยังไม่ได้ทดสอบ** เครื่องยังไม่มี Helm และ Traefik |
+> | HPA | สร้างแล้ว แต่ **ยังไม่ scale** เพราะยังไม่มี metrics-server (TARGETS เป็น `<unknown>`) |
+>
+> ถ้ายังไม่ติดตั้ง Traefik ให้ข้ามขั้นตอนที่ 2 และใช้วิธีในหัวข้อ "ลองโดยไม่มี Traefik" ด้านล่าง
 
 ## สิ่งที่ถูกสร้าง
 
@@ -118,6 +127,14 @@ kubectl -n shop get pods
 | HPA | `kubectl -n shop get hpa` | คอลัมน์ TARGETS เป็นตัวเลข ไม่ใช่ `<unknown>` |
 
 Browser จะเตือนเรื่องใบรับรองเพราะเป็น self-signed ซึ่งเป็นเรื่องปกติของเครื่องนักพัฒนา
+
+### ลองโดยไม่มี Traefik
+
+ถ้ายังไม่ได้ติดตั้ง Traefik คำสั่ง `kubectl apply -k` จะแจ้ง error ที่ resource ชนิด `Middleware` (ส่วนอื่นถูกสร้างตามปกติ) เข้าใช้งานเว็บผ่าน port-forward ได้ดังนี้ แล้วเปิด http://localhost:8088
+
+```bash
+kubectl -n shop port-forward svc/web 8088:3000
+```
 
 ### ลบทั้งหมด
 

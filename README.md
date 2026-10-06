@@ -29,23 +29,37 @@ scripts/    ตัวช่วยรัน API ตอนพัฒนา
 - Docker Desktop
 - .NET SDK 10 และ Node.js 22 (เฉพาะเมื่อพัฒนาหรือรัน test)
 
-## ตั้งค่าครั้งแรก
+## เริ่มใช้งานในคำสั่งเดียว
 
-คัดลอก `.env.example` เป็น `.env` แล้วใส่ค่าทั้งสามตัว ไฟล์ `.env` ถูก git ignore ไว้ ห้าม commit
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/up.ps1
+```
+
+สคริปต์นี้สร้างไฟล์ `.env` พร้อมรหัสผ่านแบบสุ่มให้ (เฉพาะครั้งแรก) build image ทั้งหมด รันทั้งระบบ รอจนพร้อม แล้วบอกให้เปิด http://localhost:3000
+
+หยุดระบบ:
 
 ```bash
-cp .env.example .env
+docker compose --profile app down
 ```
 
 ## วิธีรัน
 
 ### 1. ทั้งระบบด้วย docker compose
 
+ถ้ามีไฟล์ `.env` อยู่แล้ว (สคริปต์ข้างบนสร้างให้ หรือคัดลอกจาก `.env.example` แล้วใส่ค่าเอง) ใช้คำสั่งนี้ได้โดยตรง
+
 ```bash
 docker compose --profile app up --build -d
 ```
 
 เปิด http://localhost:3000 ขั้นตอน `migrate` จะสร้างตาราง ใส่ข้อมูลสินค้าตัวอย่าง 12 รายการ และสร้าง login `shop_app` ให้ API ใช้
+
+ข้อควรรู้:
+
+- **รหัสผ่าน SQL Server ถูกกำหนดตอนสร้าง volume ครั้งแรก** ถ้าเปลี่ยนค่าใน `.env` ภายหลัง ขั้นตอน `migrate` จะล้มด้วย "Login failed" วิธีเริ่มใหม่คือ `docker compose --profile app down -v` ซึ่ง **ลบข้อมูลในฐานข้อมูลทั้งหมด**
+- **ไฟล์ `.env` ถูก git ignore** ห้าม commit
+- **Rate limit นับรวมทุกคนเป็นลูกค้ารายเดียวในโหมดนี้** (ชำระเงินได้ 5 ครั้งต่อนาที) เพราะทุก request มาถึง API จาก container ของเว็บ ถ้าจะทดสอบโหลดให้เพิ่มค่า `RateLimit__CartPerMinute` และ `RateLimit__CheckoutPerMinute` ใน `docker-compose.yml`
 
 ### 2. โหมดพัฒนา
 
