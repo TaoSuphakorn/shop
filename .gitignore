@@ -6,3 +6,6 @@ node_modules/
 .env.local
 deploy/k8s/secrets.env
 .superpowers/
+
+# Personal: contains a phone number. Keep out of the public repository.
+docs/submission-email.md

@@ -7,11 +7,11 @@
 ต้องมีแค่ [Docker Desktop](https://www.docker.com/products/docker-desktop/) ที่เปิดอยู่ ไม่ต้องติดตั้ง .NET หรือ Node
 
 ```bash
-git clone -b feat/shopping-cart <ที่อยู่ repo> tnc-store
+git clone https://github.com/TaoSuphakorn/shop.git
 ```
 
 ```bash
-cd tnc-store
+cd shop
 ```
 
 ```powershell
@@ -19,8 +19,6 @@ powershell -ExecutionPolicy Bypass -File scripts/up.ps1
 ```
 
 เมื่อขึ้นข้อความ `Ready: http://localhost:3000` ให้เปิด http://localhost:3000 ได้เลย ครั้งแรกใช้เวลาหลายนาทีเพราะต้องดาวน์โหลด image ของ SQL Server และ Kafka
-
-> ตัวเลือก `-b feat/shopping-cart` จำเป็นตราบที่โค้ดยังไม่ถูก merge เข้า `main` หลัง merge แล้วให้เอาออกจากคำสั่งและลบบรรทัดนี้ทิ้ง
 
 **สิ่งที่คำสั่งนี้ทำ**
 
