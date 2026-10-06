@@ -34,7 +34,12 @@ export function ProductCard({ product, onAdd, busy = false }: {
       <div className="flex flex-1 flex-col gap-1 p-3 sm:p-4">
         <h2 className="line-clamp-2 text-sm font-medium leading-snug sm:text-base">{product.name}</h2>
         <p className="line-clamp-1 text-xs text-muted-foreground sm:text-sm">{product.description}</p>
-        <p className="mt-auto pt-2 text-lg font-bold tracking-tight sm:text-xl">{formatBaht(product.price)}</p>
+        <div className="mt-auto flex flex-wrap items-baseline justify-between gap-x-2 pt-2">
+          <p className="text-lg font-bold tracking-tight sm:text-xl">{formatBaht(product.price)}</p>
+          <p className={`text-xs tabular-nums sm:text-sm ${soldOut ? "text-muted-foreground" : "text-emerald-700"}`}>
+            คงเหลือ {product.available} ชิ้น
+          </p>
+        </div>
         <Button
           size="lg"
           className="mt-2 h-11 w-full text-sm font-semibold"

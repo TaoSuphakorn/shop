@@ -18,6 +18,16 @@ describe("ProductCard", () => {
     expect(screen.getByText("เหลือ 3 ชิ้น")).toBeInTheDocument();
   });
 
+  it("always shows how many are in stock, also when stock is plentiful", () => {
+    render(<ProductCard product={{ ...speaker, available: 25 }} onAdd={vi.fn()} />);
+    expect(screen.getByText("คงเหลือ 25 ชิ้น")).toBeInTheDocument();
+  });
+
+  it("shows zero in stock for a sold-out product", () => {
+    render(<ProductCard product={{ ...speaker, available: 0 }} onAdd={vi.fn()} />);
+    expect(screen.getByText("คงเหลือ 0 ชิ้น")).toBeInTheDocument();
+  });
+
   it("adds the product to the cart when the button is pressed", async () => {
     const onAdd = vi.fn();
     render(<ProductCard product={speaker} onAdd={onAdd} />);
