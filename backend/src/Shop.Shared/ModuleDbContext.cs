@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Shop.Shared;
@@ -7,6 +8,14 @@ namespace Shop.Shared;
 public abstract class ModuleDbContext : DbContext
 {
     protected ModuleDbContext(DbContextOptions options, UnitOfWork unitOfWork) : base(options) => unitOfWork.Enlist(this);
+
+    // Every timestamp is stored as UTC. Reading it back as UTC makes JSON carry the "Z" suffix,
+    // without which browsers would treat the reservation expiry as local time.
+    protected override void ConfigureConventions(ModelConfigurationBuilder configuration) =>
+        configuration.Properties<DateTime>().HaveConversion<UtcConverter>();
+
+    private sealed class UtcConverter() : ValueConverter<DateTime, DateTime>(
+        v => v, v => DateTime.SpecifyKind(v, DateTimeKind.Utc));
 }
 
 public static class ModuleDbContextExtensions

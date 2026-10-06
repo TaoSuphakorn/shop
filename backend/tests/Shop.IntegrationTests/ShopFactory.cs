@@ -47,6 +47,7 @@ public sealed class ShopFactory : WebApplicationFactory<Program>, IAsyncLifetime
 
     public Task ResetAsync() => ExecRawAsync("""
         DELETE cart.Carts;
+        DELETE ordering.Orders;
         DELETE shared.OutboxMessages; DELETE shared.ProcessedMessages; DELETE shared.IdempotencyKeys;
         UPDATE s SET OnHand = v.OnHand, Reserved = 0
         FROM inventory.Stock s JOIN (VALUES {SeedStockValues}) v(ProductId, OnHand) ON v.ProductId = s.ProductId;
@@ -92,6 +93,20 @@ public sealed class ShopFactory : WebApplicationFactory<Program>, IAsyncLifetime
             WHERE s.Reserved <> (SELECT COALESCE(SUM(i.Quantity), 0) FROM cart.CartItems i WHERE i.ProductId = s.ProductId)
             """);
         Assert.Equal(0, wrongReserved);
+
+        var seed = string.Join(",", SeedOnHand.Select((onHand, i) => $"({i + 1},{onHand})"));
+        var wrongOnHand = (int)(await new Func<Task<object>>(async () =>
+        {
+            await using var connection = new SqlConnection(ConnectionString);
+            await connection.OpenAsync();
+            await using var cmd = new SqlCommand($"""
+                SELECT COUNT(*) FROM inventory.Stock s JOIN (VALUES {seed}) v(ProductId, OnHand) ON v.ProductId = s.ProductId
+                WHERE s.OnHand <> v.OnHand - (SELECT COALESCE(SUM(i.Quantity), 0) FROM ordering.OrderItems i
+                    JOIN ordering.Orders o ON o.Id = i.OrderId WHERE o.Status = 'Paid' AND i.ProductId = s.ProductId)
+                """, connection);
+            return (await cmd.ExecuteScalarAsync())!;
+        })());
+        Assert.Equal(0, wrongOnHand);
     }
 
     private async Task<SqlCommand> CommandAsync(FormattableString sql)

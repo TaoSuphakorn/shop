@@ -5,6 +5,7 @@ using Shop.Api;
 using Shop.Cart;
 using Shop.Catalog;
 using Shop.Inventory;
+using Shop.Ordering;
 using Shop.Shared;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -12,7 +13,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.ConfigureKestrel(kestrel => kestrel.Limits.MaxRequestBodySize = 4096);
 builder.Services.ConfigureHttpJsonOptions(json => json.SerializerOptions.UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow);
 builder.Services.Configure<RouteHandlerOptions>(route => route.ThrowOnBadRequest = true);   // bad bodies reach UseShopErrors
-builder.Services.AddShared().AddInventoryModule().AddCatalogModule().AddCartModule();
+builder.Services.AddShared().AddInventoryModule().AddCatalogModule().AddCartModule().AddOrderingModule();
 
 var app = builder.Build();
 
@@ -29,6 +30,7 @@ app.UseIdempotencyBuffering();
 
 app.MapCatalogEndpoints();
 app.MapCartEndpoints();
+app.MapOrderingEndpoints();
 
 app.MapGet("/healthz/live", () => Results.Ok());
 app.MapGet("/healthz/ready", async (IConfiguration config, CancellationToken ct) =>
