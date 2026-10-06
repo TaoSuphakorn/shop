@@ -46,6 +46,7 @@ public sealed class ShopFactory : WebApplicationFactory<Program>, IAsyncLifetime
     public T Service<T>() where T : notnull => Services.CreateScope().ServiceProvider.GetRequiredService<T>();
 
     public Task ResetAsync() => ExecRawAsync("""
+        DELETE cart.Carts;
         DELETE shared.OutboxMessages; DELETE shared.ProcessedMessages; DELETE shared.IdempotencyKeys;
         UPDATE s SET OnHand = v.OnHand, Reserved = 0
         FROM inventory.Stock s JOIN (VALUES {SeedStockValues}) v(ProductId, OnHand) ON v.ProductId = s.ProductId;
@@ -84,7 +85,14 @@ public sealed class ShopFactory : WebApplicationFactory<Program>, IAsyncLifetime
     }
 
     // spec 15: Reserved = sum of cart quantities; OnHand = seed - sum of Paid orders
-    public Task AssertInvariantsAsync() => Task.CompletedTask;
+    public async Task AssertInvariantsAsync()
+    {
+        var wrongReserved = await ScalarAsync<int>($"""
+            SELECT COUNT(*) FROM inventory.Stock s
+            WHERE s.Reserved <> (SELECT COALESCE(SUM(i.Quantity), 0) FROM cart.CartItems i WHERE i.ProductId = s.ProductId)
+            """);
+        Assert.Equal(0, wrongReserved);
+    }
 
     private async Task<SqlCommand> CommandAsync(FormattableString sql)
     {
