@@ -1,4 +1,6 @@
-# Local infrastructure. Ports are bound to 127.0.0.1 so nothing is reachable from the network.
+# docker compose up -d                  -> infrastructure only (SQL Server, Kafka) for local development
+# docker compose --profile app up -d    -> the whole system, then open http://localhost:3000
+# Ports are bound to 127.0.0.1 so nothing is reachable from the network.
 services:
   mssql:
     image: mcr.microsoft.com/mssql/server:2022-latest
@@ -37,6 +39,48 @@ services:
       interval: 5s
       timeout: 10s
       retries: 30
+
+  migrate:
+    profiles: [app]
+    build: ./backend
+    image: shop-api:local
+    command: ["migrate"]
+    environment:
+      ConnectionStrings__Shop: Server=mssql,1433;Database=Shop;User Id=sa;Password=${MSSQL_SA_PASSWORD};Encrypt=True;TrustServerCertificate=True
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?set APP_DB_PASSWORD in .env}
+    depends_on:
+      mssql: { condition: service_healthy }
+
+  api:
+    profiles: [app]
+    image: shop-api:local
+    environment:
+      # Least-privilege login created by the migrate step; the API never connects as sa.
+      ConnectionStrings__Shop: Server=mssql,1433;Database=Shop;User Id=shop_app;Password=${APP_DB_PASSWORD};Encrypt=True;TrustServerCertificate=True
+      CART_SIGNING_KEY: ${CART_SIGNING_KEY:?set CART_SIGNING_KEY in .env}
+      Kafka__BootstrapServers: kafka:9092
+      ForwardedHeaders__KnownNetworks: 172.16.0.0/12,192.168.0.0/16   # docker networks: trust the web container's X-Forwarded-For
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      kafka: { condition: service_healthy }
+
+  web:
+    profiles: [app]
+    build: ./frontend
+    image: shop-web:local
+    environment:
+      API_ORIGIN: http://api:8080
+    ports:
+      - "127.0.0.1:3000:3000"
+    read_only: true
+    tmpfs: [/tmp, /app/.next/cache]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    depends_on: [api]
 
 volumes:
   mssql-data:
