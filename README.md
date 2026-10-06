@@ -58,7 +58,22 @@ powershell -ExecutionPolicy Bypass -File scripts/up.ps1
 **เอกสารสำหรับผู้รับช่วงต่อ**
 
 - [Spec การออกแบบ](docs/superpowers/specs/2026-10-06-shopping-cart-design.md) — เหตุผลของทุกการตัดสินใจ กฎของสต๊อก API ความปลอดภัย
+- [โครงสร้างฐานข้อมูล](docs/database.md) — ตาราง คอลัมน์ ข้อบังคับ และแผนภาพ
 - [แผนลงมือทำ](docs/superpowers/plans/2026-10-06-shopping-cart.md) — แบ่งงานเป็น 13 task พร้อม interface และ test ของแต่ละ task
+
+## ภาพหน้าจอ
+
+| รายการสินค้า | ตะกร้าสินค้า |
+|---|---|
+| ![รายการสินค้า](docs/screenshots/01-product-list.jpg) | ![ตะกร้าสินค้า](docs/screenshots/02-cart.jpg) |
+
+| ชำระเงินสำเร็จ | ยกเลิกออเดอร์และคืนสต๊อก |
+|---|---|
+| ![ชำระเงินสำเร็จ](docs/screenshots/03-order-paid.jpg) | ![ออเดอร์ถูกยกเลิก](docs/screenshots/05-order-cancelled.jpg) |
+
+โครงสร้างฐานข้อมูลอยู่ที่ [docs/database.md](docs/database.md)
+
+![โครงสร้างฐานข้อมูล](docs/screenshots/06-database-structure.jpg)
 
 ## โครงสร้าง
 
