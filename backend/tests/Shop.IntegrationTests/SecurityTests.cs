@@ -1,8 +1,11 @@
 using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 using Shop.Cart;
 
 namespace Shop.IntegrationTests;
@@ -87,6 +90,60 @@ public class SecurityTests(ShopFactory f) : IAsyncLifetime
         Assert.Equal((HttpStatusCode)429, (await c.DeleteAsync("/api/cart")).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await c.GetAsync("/api/cart")).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await c.GetAsync("/api/products")).StatusCode);
+    }
+
+    // Behaves like a request arriving from 172.18.0.5 (a proxy container) carrying a client-written X-Forwarded-For.
+    private HttpClient ClientBehindProxy(string knownNetworks) =>
+        f.WithWebHostBuilder(b =>
+        {
+            b.UseSetting("RateLimit:CheckoutPerMinute", "2");
+            b.UseSetting("ForwardedHeaders:KnownNetworks", knownNetworks);
+            b.ConfigureServices(services => services.AddSingleton<IStartupFilter>(new RemoteIp("172.18.0.5")));
+        }).CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost") });
+
+    private sealed class RemoteIp(string ip) : IStartupFilter
+    {
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
+        {
+            app.Use((http, n) => { http.Connection.RemoteIpAddress = IPAddress.Parse(ip); return n(http); });
+            next(app);
+        };
+    }
+
+    private static Task<HttpResponseMessage> CheckoutAs(HttpClient c, string forwardedFor)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/orders");
+        request.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+        request.Headers.Add("X-Forwarded-For", forwardedFor);
+        return c.SendAsync(request);
+    }
+
+    [Fact]
+    public async Task Spoofed_forwarded_header_cannot_dodge_the_rate_limit_when_no_proxy_is_trusted()
+    {
+        var c = ClientBehindProxy(knownNetworks: "");
+        await CheckoutAs(c, "203.0.113.1");
+        await CheckoutAs(c, "203.0.113.2");
+        Assert.Equal((HttpStatusCode)429, (await CheckoutAs(c, "203.0.113.3")).StatusCode);
+    }
+
+    [Fact]
+    public async Task Forwarded_header_from_an_untrusted_network_is_ignored()
+    {
+        var c = ClientBehindProxy(knownNetworks: "10.0.0.0/8");   // 172.18.0.5 is outside it
+        await CheckoutAs(c, "203.0.113.1");
+        await CheckoutAs(c, "203.0.113.2");
+        Assert.Equal((HttpStatusCode)429, (await CheckoutAs(c, "203.0.113.3")).StatusCode);
+    }
+
+    [Fact]
+    public async Task Clients_behind_a_trusted_proxy_are_limited_separately()
+    {
+        var c = ClientBehindProxy(knownNetworks: "172.16.0.0/12");
+        await CheckoutAs(c, "203.0.113.1");
+        await CheckoutAs(c, "203.0.113.1");
+        Assert.Equal((HttpStatusCode)429, (await CheckoutAs(c, "203.0.113.1")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await CheckoutAs(c, "203.0.113.2")).StatusCode);   // cart_empty: not limited
     }
 
     [Fact]

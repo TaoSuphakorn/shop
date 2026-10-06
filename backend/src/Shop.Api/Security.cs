@@ -25,11 +25,16 @@ public static class Security
         // and walk around the rate limits below.
         builder.Services.Configure<ForwardedHeadersOptions>(options =>
         {
-            options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
             options.KnownIPNetworks.Clear();
             options.KnownProxies.Clear();
-            foreach (var network in ParseNetworks(builder.Configuration["ForwardedHeaders:KnownNetworks"]))
-                options.KnownIPNetworks.Add(network);
+            var trusted = ParseNetworks(builder.Configuration["ForwardedHeaders:KnownNetworks"]);
+            foreach (var network in trusted) options.KnownIPNetworks.Add(network);
+
+            // ASP.NET treats "no known networks and no known proxies" as "trust every sender".
+            // Nothing configured must mean the opposite here: ignore the headers altogether.
+            options.ForwardedHeaders = trusted.Count == 0
+                ? ForwardedHeaders.None
+                : ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
         });
 
         // Counters live in each pod's memory, so the real ceiling is the limit times the replica count.
