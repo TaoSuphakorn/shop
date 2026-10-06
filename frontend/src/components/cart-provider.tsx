@@ -13,7 +13,8 @@ type CartContext = {
   busy: boolean;
   open: boolean;
   setOpen(open: boolean): void;
-  add(productId: number): Promise<void>;
+  /** Resolves true when the product is now in the cart. */
+  add(productId: number): Promise<boolean>;
   setQuantity(productId: number, quantity: number): Promise<void>;
   remove(productId: number): Promise<void>;
   clear(): Promise<void>;
@@ -63,16 +64,17 @@ export function CartProvider({ initialProducts, children }: { initialProducts: P
   }, [refresh]);
 
   /** Runs one user action: locks the buttons, applies the returned cart, and explains any failure in Thai. */
-  const run = useCallback(async (action: () => Promise<Cart | void>, onSuccess?: () => void) => {
+  const run = useCallback(async (action: () => Promise<Cart | void>): Promise<boolean> => {
     setBusy(true);
     try {
       const nextCart = await action();
       if (nextCart) setCart(nextCart);
-      onSuccess?.();
       api.getProducts().then(setProducts).catch(() => {});   // show the new remaining stock
+      return true;
     } catch (error) {
       toast.error(messageFor(error instanceof api.ApiError ? error.code : ""));
       await refresh().catch(() => {});
+      return false;
     } finally {
       setBusy(false);
     }
@@ -82,14 +84,15 @@ export function CartProvider({ initialProducts, children }: { initialProducts: P
     cart, products, busy, open, setOpen, refresh,
     add: (productId) => {
       const key = api.newIdempotencyKey();   // one key per press, reused by the retry
-      return run(() => retryOnNetworkError(() => api.addItem(productId, 1, key)), () => setOpen(true));
+      // The drawer stays closed: the shopper keeps browsing and opens the cart when ready to pay.
+      return run(() => retryOnNetworkError(() => api.addItem(productId, 1, key)));
     },
-    setQuantity: (productId, quantity) => run(() => api.setQuantity(productId, quantity)),
-    remove: (productId) => run(() => api.removeItem(productId)),
-    clear: () => run(() => api.clearCart()),
-    checkout: () => {
+    setQuantity: async (productId, quantity) => { await run(() => api.setQuantity(productId, quantity)); },
+    remove: async (productId) => { await run(() => api.removeItem(productId)); },
+    clear: async () => { await run(() => api.clearCart()); },
+    checkout: async () => {
       const key = api.newIdempotencyKey();
-      return run(async () => {
+      await run(async () => {
         const order = await retryOnNetworkError(() => api.checkout(key));
         setOpen(false);
         router.push(`/orders/${order.id}`);

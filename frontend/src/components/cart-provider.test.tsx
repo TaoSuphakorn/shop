@@ -1,5 +1,6 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "@/lib/api";
 import { CartProvider, useCart } from "./cart-provider";
@@ -26,12 +27,14 @@ const product: api.Product = {
 
 function Probe() {
   const cart = useCart();
+  const [added, setAdded] = useState("");
   return (
     <div>
       <output data-testid="count">{cart.cart.items.reduce((n, i) => n + i.quantity, 0)}</output>
       <output data-testid="open">{String(cart.open)}</output>
       <output data-testid="available">{cart.products[0]?.available}</output>
-      <button onClick={() => cart.add(4)}>add</button>
+      <output data-testid="added">{added}</output>
+      <button onClick={async () => setAdded(String(await cart.add(4)))}>add</button>
       <button onClick={() => cart.setQuantity(4, 2)}>set</button>
       <button onClick={() => cart.remove(4)}>remove</button>
       <button onClick={() => cart.clear()}>clear</button>
@@ -56,14 +59,15 @@ describe("CartProvider", () => {
     await waitFor(() => expect(count()).toBe("1"));
   });
 
-  it("adds a product with a fresh idempotency key, opens the drawer and refreshes stock", async () => {
+  it("adds a product with a fresh idempotency key, reports success, refreshes stock and leaves the drawer closed", async () => {
     vi.mocked(api.addItem).mockResolvedValue(oneItem);
     vi.mocked(api.getProducts).mockResolvedValue([{ ...product, available: 2 }]);
     renderProvider();
     await userEvent.click(screen.getByText("add"));
 
     await waitFor(() => expect(count()).toBe("1"));
-    expect(screen.getByTestId("open")).toHaveTextContent("true");
+    expect(screen.getByTestId("added")).toHaveTextContent("true");
+    expect(screen.getByTestId("open")).toHaveTextContent("false");   // the shopper opens the cart when ready to pay
     await waitFor(() => expect(screen.getByTestId("available")).toHaveTextContent("2"));
     const [productId, quantity, key] = vi.mocked(api.addItem).mock.calls[0];
     expect([productId, quantity]).toEqual([4, 1]);
@@ -92,11 +96,12 @@ describe("CartProvider", () => {
     expect(toastError).not.toHaveBeenCalled();
   });
 
-  it("explains an out-of-stock error in Thai, keeps the drawer closed and reloads the cart", async () => {
+  it("explains an out-of-stock error in Thai, reports failure and reloads the cart", async () => {
     vi.mocked(api.addItem).mockRejectedValue(new api.ApiError(409, "out_of_stock", 0));
     renderProvider();
     await userEvent.click(screen.getByText("add"));
     await waitFor(() => expect(toastError).toHaveBeenCalledWith("สินค้าเหลือไม่พอ"));
+    await waitFor(() => expect(screen.getByTestId("added")).toHaveTextContent("false"));
     expect(screen.getByTestId("open")).toHaveTextContent("false");
     await waitFor(() => expect(vi.mocked(api.getCart).mock.calls.length).toBeGreaterThanOrEqual(2));
   });

@@ -17,7 +17,7 @@ export function ProductCard({ product, onAdd, busy = false }: {
 }) {
   const soldOut = product.available <= 0;
   return (
-    <article className="group flex flex-col overflow-hidden rounded-2xl border bg-card shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-lg">
+    <article data-product-id={product.id} className="group flex flex-col overflow-hidden rounded-2xl border bg-card shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-lg">
       <div className="relative aspect-square overflow-hidden bg-muted">
         <Image
           src={safeImageUrl(product.imageUrl)}

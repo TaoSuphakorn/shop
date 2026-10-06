@@ -6,12 +6,13 @@ import { CartProvider, useCart } from "@/components/cart-provider";
 import { ProductGrid } from "@/components/product-grid";
 import { Button } from "@/components/ui/button";
 import type { Product } from "@/lib/api";
+import { flyToCart } from "@/lib/fly-to-cart";
 
 function CartButton() {
   const { cart, setOpen } = useCart();
   const pieces = cart.items.reduce((sum, item) => sum + item.quantity, 0);
   return (
-    <Button variant="outline" size="lg" className="relative h-11 rounded-full px-4" onClick={() => setOpen(true)}
+    <Button data-cart-button variant="outline" size="lg" className="relative h-11 rounded-full px-4" onClick={() => setOpen(true)}
       aria-label={`เปิดตะกร้า มี ${pieces} ชิ้น`}>
       <ShoppingBag aria-hidden />
       ตะกร้า
@@ -20,13 +21,23 @@ function CartButton() {
           {pieces}
         </span>
       )}
+      {/* The drawer no longer opens on add, so say what happened for screen reader users. */}
+      <span aria-live="polite" className="sr-only">{pieces > 0 ? `ในตะกร้ามี ${pieces} ชิ้น` : ""}</span>
     </Button>
   );
 }
 
 function Shelves() {
   const { products, add, busy } = useCart();
-  return <ProductGrid products={products} onAdd={add} busy={busy} />;
+
+  const addWithAnimation = async (productId: number) => {
+    // Measure before the request: the page may re-render while it is in flight.
+    const image = document.querySelector(`[data-product-id="${productId}"] img`);
+    const cartButton = document.querySelector("[data-cart-button]");
+    if ((await add(productId)) && image?.isConnected && cartButton) flyToCart(image, cartButton);
+  };
+
+  return <ProductGrid products={products} onAdd={addWithAnimation} busy={busy} />;
 }
 
 export function Storefront({ initialProducts }: { initialProducts: Product[] }) {
