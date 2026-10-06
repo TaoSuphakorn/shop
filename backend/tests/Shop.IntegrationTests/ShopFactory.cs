@@ -31,6 +31,7 @@ public sealed class ShopFactory : WebApplicationFactory<Program>, IAsyncLifetime
     {
         await _sql.StartAsync();
         await DbProvisioner.RunAsync(Services);
+        await ExecRawAsync("SELECT * INTO dbo.ProductsSeed FROM catalog.Products");   // snapshot for ResetAsync
     }
 
     async Task IAsyncLifetime.DisposeAsync()
@@ -48,6 +49,8 @@ public sealed class ShopFactory : WebApplicationFactory<Program>, IAsyncLifetime
         DELETE shared.OutboxMessages; DELETE shared.ProcessedMessages; DELETE shared.IdempotencyKeys;
         UPDATE s SET OnHand = v.OnHand, Reserved = 0
         FROM inventory.Stock s JOIN (VALUES {SeedStockValues}) v(ProductId, OnHand) ON v.ProductId = s.ProductId;
+        UPDATE p SET Name = s.Name, Description = s.Description, Price = s.Price, ImageUrl = s.ImageUrl
+        FROM catalog.Products p JOIN dbo.ProductsSeed s ON s.Id = p.Id;
         """.Replace("{SeedStockValues}", string.Join(",", SeedOnHand.Select((onHand, i) => $"({i + 1},{onHand})"))));
 
     public static readonly int[] SeedOnHand = [25, 12, 40, 3, 8, 60, 1, 30, 100, 5, 0, 2];
