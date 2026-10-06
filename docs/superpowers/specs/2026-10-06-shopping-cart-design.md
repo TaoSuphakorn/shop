@@ -21,7 +21,7 @@
 7. request ที่ส่งซ้ำ (retry, กดซ้ำ) ไม่สร้างผลซ้ำ
 8. รันได้หลาย replica หลัง load balancer บน Kubernetes
 
-**อยู่นอกขอบเขต:** ระบบสมาชิกและล็อกอิน, payment gateway จริง, หน้า admin, โปรแกรมนำเข้าข้อมูลสินค้า, message broker, ค่าส่งและภาษี
+**อยู่นอกขอบเขต:** ระบบสมาชิกและล็อกอิน, payment gateway จริง, หน้า admin, โปรแกรมนำเข้าข้อมูลสินค้า, ค่าส่งและภาษี
 
 ## 2. การตัดสินใจหลัก
 
@@ -32,7 +32,7 @@
 | จังหวะตัด stock    | จองเมื่อเพิ่มลงตะกร้า ตัดจริงเมื่อชำระเงิน          | โจทย์กำหนดให้ตะกร้าปรับยอด stock                                   |
 | ตะกร้าถูกทิ้ง      | คืนการจองหลังนิ่ง 15 นาที                           | กัน stock ค้างในตะกร้าที่ไม่มีคนซื้อ                               |
 | การชำระเงิน        | จำลอง: กดแล้วถือว่าจ่ายสำเร็จ                       | โจทย์ต้องการแค่แสดงยอดและตัด stock                                 |
-| Outbox             | ตารางใน SQL Server + ตัว dispatch ใน process        | ไม่ต้องดูแล broker เพิ่ม                                           |
+| Outbox | ตารางใน SQL Server + ตัว relay ที่ publish เข้า Kafka | event ไม่หายแม้ Kafka ล่ม และโมดูลผู้รับแยกเป็น service ได้โดยไม่แก้ผู้ส่ง |
 | Ingress controller | Traefik                                             | โครงการ ingress-nginx ยุติการดูแลตั้งแต่มีนาคม 2026                |
 
 ## 3. Tech stack
@@ -41,6 +41,7 @@
 | -------- | ---------------------------------------------------------------- |
 | Frontend | Next.js (App Router, TypeScript), Tailwind CSS, shadcn/ui        |
 | Backend  | .NET 10, ASP.NET Core Minimal API, EF Core                       |
+| Messaging | Apache Kafka (โหมด KRaft), client `Confluent.Kafka` |
 | Database | SQL Server 2022                                                  |
 | ทดสอบ    | xUnit, `WebApplicationFactory`, Testcontainers (SQL Server จริง) |
 | รัน      | Docker, docker compose (dev), Kubernetes + Kustomize             |
@@ -123,7 +124,7 @@ Browser ──HTTPS──> Traefik Ingress (load balancer, TLS, rate limit, secu
 
 1. ย้าย schema ของโมดูลนั้นไปฐานข้อมูลใหม่ (ทำได้เพราะไม่มี join และ foreign key ข้าม schema)
 2. เปลี่ยน implementation ของ contract interface จากเรียกใน process เป็น HTTP client
-3. เปลี่ยน outbox dispatcher จากเรียก handler ใน process เป็นส่งเข้า message broker
+3. ย้าย Kafka consumer ของโมดูลนั้นไปรันใน service ใหม่ (ผู้ส่งไม่ต้องแก้ เพราะ event ผ่าน Kafka อยู่แล้ว)
 4. จุดที่เคยอยู่ใน transaction เดียว (จอง stock ตอนเพิ่มตะกร้า, ตัด stock ตอนชำระเงิน) ต้องเปลี่ยนเป็น saga ที่มีขั้นตอนชดเชย
 
 ## 6. โมเดลข้อมูล
@@ -181,6 +182,7 @@ Browser ──HTTPS──> Traefik Ingress (load balancer, TLS, rate limit, secu
 | ตาราง             | คอลัมน์                                    | หมายเหตุ                             |
 | ----------------- | ------------------------------------------ | ------------------------------------ |
 | OutboxMessages    | Id uniqueidentifier                        | PK                                   |
+| | [Key] nvarchar(100) | key ของข้อความใน Kafka |
 |                   | Type nvarchar(100), Payload nvarchar(max)  | Payload เป็น JSON                    |
 |                   | OccurredAt, ProcessedAt                    | index บนแถวที่ `ProcessedAt IS NULL` |
 |                   | Attempts int, LastError nvarchar(2000)     |                                      |
@@ -316,7 +318,7 @@ Seed ผ่าน EF Core `HasData` ใน migration: สินค้า 12 ร�
 3. แก้ได้ 0 แถวและออเดอร์เป็น `Cancelled` อยู่แล้ว → ตอบ 200 ด้วยสถานะปัจจุบัน ไม่เขียน event
 4. แก้ได้ 0 แถวและไม่พบออเดอร์ของ guest นี้ → 404
 
-Stock กลับคืนเมื่อ dispatcher ประมวลผล event ซึ่งปกติภายใน 1–2 วินาที (eventual consistency) หน้าเว็บดึงรายการสินค้าใหม่หลังยกเลิก
+Stock กลับคืนเมื่อ event เดินทางผ่าน Kafka ถึง consumer ของ Inventory ซึ่งปกติภายใน 1–2 วินาที (eventual consistency) หน้าเว็บดึงรายการสินค้าใหม่หลังยกเลิก
 
 ## 10. Idempotency และ Outbox
 
@@ -338,7 +340,19 @@ Stock กลับคืนเมื่อ dispatcher ประมวลผล e
 
 Frontend สร้าง key ด้วย `crypto.randomUUID()` หนึ่ง key ต่อหนึ่งการกดของผู้ใช้ และใช้ key เดิมเมื่อ retry
 
-### 10.2 Outbox
+### 10.2 Outbox และ Kafka
+
+Event เดินทางสองช่วง: ผู้ส่งเขียนลงตาราง outbox → relay publish เข้า Kafka → consumer ของโมดูลผู้รับประมวลผล
+
+```
+Ordering ──(transaction เดียวกับออเดอร์)──> shared.OutboxMessages
+                                              │  OutboxRelay (ทุก pod)
+                                              ▼
+                                   Kafka topic  shop.events
+                                              │  consumer group  shop-inventory
+                                              ▼
+                              Inventory: OrderCancelledHandler (Restock)
+```
 
 **Event ที่มี**
 
@@ -346,16 +360,36 @@ Frontend สร้าง key ด้วย `crypto.randomUUID()` หนึ่ง 
 | ---------------- | -------- | ------------------- | ----------------------------------------- |
 | `OrderCancelled` | Ordering | Inventory (Restock) | `orderId`, `items[{productId, quantity}]` |
 
-**Dispatcher:** `BackgroundService` ในทุก pod วนทุก 1 วินาที ประมวลผลทีละข้อความ หนึ่งข้อความต่อหนึ่ง transaction:
+**รูปข้อความใน Kafka**
+
+| ส่วน | ค่า |
+| --- | --- |
+| Topic | `shop.events` (3 partition) |
+| Key | รหัสของสิ่งที่ event พูดถึง (`orderId`) เพื่อให้ event ของออเดอร์เดียวกันเรียงลำดับ |
+| Value | Payload เป็น JSON |
+| Header `message-id` | `OutboxMessages.Id` ใช้กันประมวลผลซ้ำ |
+| Header `type` | ชื่อ event เช่น `OrderCancelled` |
+
+**OutboxRelay:** `BackgroundService` ในทุก pod วนทุก 1 วินาที ส่งทีละข้อความ หนึ่งข้อความต่อหนึ่ง transaction:
 
 1. `SELECT TOP 1 ... FROM shared.OutboxMessages WITH (UPDLOCK, READPAST, ROWLOCK) WHERE ProcessedAt IS NULL AND Attempts < 10 ORDER BY OccurredAt`
-2. Handler `INSERT` ลง `ProcessedMessages` ก่อน ถ้าชน primary key แปลว่าเคยทำแล้ว ให้ข้ามงาน
-3. Handler ทำงาน (Restock)
-4. ตั้ง `ProcessedAt` แล้ว commit
+2. Publish เข้า Kafka และรอ broker ยืนยัน (`acks=all`, `enable.idempotence=true`)
+3. ตั้ง `ProcessedAt` แล้ว commit
 
-ถ้า handler ล้มเหลว: rollback แล้วเพิ่ม `Attempts` และบันทึก `LastError` ใน transaction แยก ข้อความที่ `Attempts` ถึง 10 จะถูกข้ามและ log ระดับ error เพื่อให้คนเข้ามาดู
+ถ้า publish ล้มเหลว (เช่น Kafka ล่ม): rollback แล้วเพิ่ม `Attempts` และบันทึก `LastError` ใน transaction แยก ข้อความยังอยู่ในตารางและถูกส่งใหม่รอบถัดไป ข้อความที่ `Attempts` ถึง 10 จะถูกข้ามและ log ระดับ error เพื่อให้คนเข้ามาดู
 
-การรับประกัน: ส่งอย่างน้อยหนึ่งครั้ง (at-least-once) และ handler ให้ผลครั้งเดียวด้วย `ProcessedMessages`
+**Consumer:** `BackgroundService` ในทุก pod ใช้ consumer group `shop-inventory`, `enable.auto.commit=false`:
+
+1. รับข้อความ หา handler จาก header `type`
+2. เปิด transaction: handler `INSERT` ลง `ProcessedMessages` (`message-id`, ชื่อ handler) ก่อน ถ้าชน primary key แปลว่าเคยทำแล้ว ให้ข้ามงาน
+3. Handler ทำงาน (Restock) แล้ว commit transaction
+4. Commit offset ให้ Kafka
+
+ถ้า handler ล้มเหลว ลองใหม่สูงสุด 5 ครั้ง ถ้ายังไม่ผ่าน หรือไม่มี handler สำหรับ `type` นั้น หรือข้อความไม่มี header ครบ ให้ส่งข้อความไป topic `shop.events.dlq` แล้ว commit offset เพื่อไม่ให้ข้อความเสียขวาง partition
+
+**การรับประกัน:** ทั้งสองช่วงส่งอย่างน้อยหนึ่งครั้ง (at-least-once) relay อาจ publish ซ้ำถ้าล้มหลัง publish ก่อน commit และ consumer อาจได้ข้อความซ้ำถ้าล้มก่อน commit offset ตาราง `ProcessedMessages` ทำให้ผลเกิดครั้งเดียว
+
+**ความปลอดภัยของ Kafka:** ใน cluster ใช้ listener แบบ `PLAINTEXT` และจำกัดการเข้าถึงด้วย NetworkPolicy ให้เฉพาะ pod `api` ใน production ต้องเปิด TLS และ SASL และใช้ Kafka แบบ managed หรืออย่างน้อย 3 broker
 
 ## 11. ความปลอดภัย
 
@@ -423,7 +457,7 @@ Frontend สร้าง key ด้วย `crypto.randomUUID()` หนึ่ง 
 ### 11.7 NetworkPolicy
 
 - ค่าเริ่มต้น: ปิดการเข้าออกทั้งหมดใน namespace `shop`
-- อนุญาต: Traefik → `web` และ `api`; `web` → `api`; `api` และ migration Job → `mssql`; ทุก pod → DNS
+- อนุญาต: Traefik → `web` และ `api`; `web` → `api`; `api` และ migration Job → `mssql`; `api` → `kafka`; ทุก pod → DNS
 
 ## 12. Frontend
 
@@ -472,6 +506,7 @@ Manifest อยู่ใน `deploy/k8s/` จัดการด้วย Kustomi
 | -------------------- | --------------------------------------------------------------------------------------------- |
 | `namespace.yaml`     | Namespace                                                                                     |
 | `mssql.yaml`         | StatefulSet 1 replica, PVC 5Gi, Service (ClusterIP)                                           |
+| `kafka.yaml` | StatefulSet 1 replica (image `apache/kafka`, โหมด KRaft ไม่ใช้ ZooKeeper), PVC 2Gi, Service (ClusterIP) port 9092 |
 | `migrate-job.yaml`   | Job: รัน migration, seed, สร้าง login `shop_app`                                              |
 | `api.yaml`           | Deployment 3 replicas, Service, HPA 3–10 ที่ CPU 70%, PodDisruptionBudget (`minAvailable: 2`) |
 | `web.yaml`           | Deployment 2 replicas, Service                                                                |
@@ -514,7 +549,7 @@ Integration test รันกับ SQL Server จริงผ่าน Testcont
 | 1   | Guest 50 คนเพิ่มสินค้าที่เหลือ 5 ชิ้นพร้อมกัน                                                      | สำเร็จ 5 คน, ที่เหลือได้ 409, `Reserved` = 5                                           |
 | 2   | ชำระเงินด้วย key เดียวกัน 10 ครั้งพร้อมกัน                                                         | มีออเดอร์เดียว, stock ถูกตัดครั้งเดียว, ทุก response เหมือนกัน                         |
 | 3   | ใช้ key เดิมกับ body ที่ต่างกัน                                                                    | 422                                                                                    |
-| 4   | ยกเลิกออเดอร์เดียวกันสองครั้ง และ dispatcher สองตัวทำงานพร้อมกัน                                   | `OnHand` กลับคืนครั้งเดียว                                                             |
+| 4   | ยกเลิกออเดอร์เดียวกันสองครั้ง และข้อความถูกส่งซ้ำใน Kafka                                   | `OnHand` กลับคืนครั้งเดียว                                                             |
 | 5   | เพิ่ม ลด ลบ ล้างตะกร้า                                                                             | `Reserved` ตรงกับผลรวมของตะกร้าทุกใบเสมอ                                               |
 | 6   | ตะกร้าหมดอายุ                                                                                      | ตัวกวาดคืน `Reserved` และลบตะกร้า                                                      |
 | 7   | Guest A ขอดูหรือยกเลิกออเดอร์ของ guest B                                                           | 404                                                                                    |
@@ -537,7 +572,7 @@ Integration test รันกับ SQL Server จริงผ่าน Testcont
 
 | ไม่ทำ                              | ทำเมื่อ                                                              |
 | ---------------------------------- | -------------------------------------------------------------------- |
-| Message broker                     | แยกโมดูลออกเป็น service จริง                                         |
+| Kafka หลาย broker, TLS, SASL | ก่อนขึ้น production |
 | Redis สำหรับ rate limit หรือ cache | ต้องการเพดาน rate limit ที่แม่นยำข้าม pod หรือ SQL รับโหลดอ่านไม่ไหว |
 | OpenTelemetry, dashboard           | ก่อนขึ้น production                                                  |
 | Playwright e2e                     | เมื่อหน้าเว็บมีมากกว่าสองหน้า                                        |

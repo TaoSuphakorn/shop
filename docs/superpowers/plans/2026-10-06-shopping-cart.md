@@ -6,7 +6,7 @@
 
 **Architecture:** Modular monolith บน .NET 10 แบ่งเป็นโมดูล Catalog / Inventory / Cart / Ordering ที่มี SQL schema และ `DbContext` ของตัวเอง คุยกันผ่าน interface ใน `Shop.Shared` และ outbox event ทุก request ใช้ transaction เดียวผ่าน `UnitOfWork` หน้าบ้านเป็น Next.js ที่อยู่ origin เดียวกับ API หลัง Traefik บน Kubernetes
 
-**Tech Stack:** .NET 10 Minimal API, EF Core (SqlServer), SQL Server 2022, xUnit + Testcontainers.MsSql + `WebApplicationFactory`, Next.js (App Router, TypeScript), Tailwind, shadcn/ui, Docker, Kustomize, Traefik
+**Tech Stack:** .NET 10 Minimal API, EF Core (SqlServer), SQL Server 2022, Apache Kafka (KRaft) + `Confluent.Kafka`, xUnit + Testcontainers.MsSql + Testcontainers.Kafka + `WebApplicationFactory`, Next.js (App Router, TypeScript), Tailwind, shadcn/ui, Docker, Kustomize, Traefik
 
 **Spec:** `docs/superpowers/specs/2026-10-06-shopping-cart-design.md` — ผู้ลงมือต้องอ่านคู่กับแผนนี้ เลขข้อที่อ้าง (เช่น "spec 7") หมายถึงหัวข้อใน spec
 
@@ -49,7 +49,8 @@ backend/
     SharedDbContext.cs                 OutboxMessages, ProcessedMessages, IdempotencyKeys
     Guest.cs                           cookie sid: สร้าง, ตรวจ, endpoint filter
     Idempotency.cs                     endpoint filter
-    Outbox.cs                          IOutbox, IOutboxHandler, OutboxDispatcher
+    Outbox.cs                          IOutbox, OutboxRelay (ตาราง outbox → Kafka)
+    EventConsumer.cs                   IEventHandler, EventConsumer (Kafka → handler, DLQ)
     SharedModule.cs                    AddShared()
   src/Shop.Inventory/                  InventoryDbContext, InventoryApi, OrderCancelledHandler, InventoryModule
   src/Shop.Catalog/                    CatalogDbContext, CatalogApi, CatalogModule (GET /api/products)
@@ -125,9 +126,10 @@ public static class Guest {
 public static RouteHandlerBuilder RequireIdempotencyKey(this RouteHandlerBuilder builder);
 
 // Shop.Shared/Outbox.cs
-public interface IOutbox { void Add<T>(T message) where T : notnull; }             // Type = typeof(T).Name
-public interface IOutboxHandler { string EventType { get; } string Name { get; } Task HandleAsync(string payloadJson, CancellationToken ct); }
-public sealed class OutboxDispatcher { public Task<bool> RunOnceAsync(CancellationToken ct); }   // true = ประมวลผลไปหนึ่งข้อความ
+public interface IOutbox { void Add<T>(string key, T message) where T : notnull; } // Type = typeof(T).Name; key = Kafka message key
+public interface IEventHandler { string EventType { get; } string Name { get; } Task HandleAsync(string payloadJson, CancellationToken ct); }
+public sealed class OutboxRelay { public Task<bool> RunOnceAsync(CancellationToken ct); }        // true = ส่งหรือบันทึกความล้มเหลวไปหนึ่งข้อความ
+public sealed class EventConsumer { public Task<bool> ConsumeOnceAsync(TimeSpan timeout, CancellationToken ct); } // true = รับและจัดการไปหนึ่งข้อความ
 
 // ทุกโมดูล
 public static class XModule {
@@ -647,69 +649,43 @@ public sealed class OrderService {
 
 ---
 
-### Task 8: Outbox และการยกเลิกออเดอร์
+### Task 8: Outbox, Kafka, และการยกเลิกออเดอร์
 
 **Files:**
-- Create: `Shop.Shared/Outbox.cs`, `Shop.Inventory/OrderCancelledHandler.cs`
-- Modify: `Shop.Ordering/{OrderService,OrderingModule}.cs`, `Shop.Inventory/InventoryModule.cs`, `Shop.Shared/SharedModule.cs`
+- Create: `Shop.Shared/Outbox.cs`, `Shop.Shared/EventConsumer.cs`, `Shop.Inventory/OrderCancelledHandler.cs`
+- Modify: `Shop.Ordering/{OrderService,OrderingModule}.cs`, `Shop.Inventory/InventoryModule.cs`, `Shop.Shared/SharedModule.cs`, `Shop.Shared/SharedDbContext.cs` (คอลัมน์ `Key` + migration), `tests/.../ShopFactory.cs` (เพิ่ม `KafkaContainer`, ตั้ง `Kafka:BootstrapServers`), `docker-compose.yml` (service `kafka`)
 - Test: `CancelTests.cs`
 
 **Interfaces:**
 - Consumes: `IInventoryApi.RestockAsync`, `SharedDbContext`, `UnitOfWork`
-- Produces: `IOutbox`, `IOutboxHandler`, `OutboxDispatcher` (ลงทะเบียนเป็น singleton และ hosted service ที่วนทุก 1 วินาทีเมื่อ `BackgroundJobs:Enabled`; แต่ละรอบสร้าง scope ใหม่), `OrderService.CancelAsync(Guid guestId, Guid orderId, CancellationToken ct) : Task<OrderDto>`, endpoint `POST /api/orders/{id:guid}/cancel` (`RequireIdempotencyKey`)
+- Produces: `IOutbox`, `IEventHandler`, `OutboxRelay`, `EventConsumer` (ทั้งสองเป็น singleton และมี hosted service ที่วนเมื่อ `BackgroundJobs:Enabled`; แต่ละรอบสร้าง scope ใหม่), `OrderService.CancelAsync(Guid guestId, Guid orderId, CancellationToken ct) : Task<OrderDto>`, endpoint `POST /api/orders/{id:guid}/cancel` (`RequireIdempotencyKey`)
 
-- `IOutbox.Add` เพิ่ม entity ลง `SharedDbContext` แล้ว `SaveChanges` ภายใน transaction ปัจจุบัน (ต้องถูกเรียกใน `UnitOfWork.ExecuteAsync`)
-- `CancelAsync` ตาม spec 9.3
-- `OutboxDispatcher.RunOnceAsync` ตาม spec 10.2 หนึ่งข้อความต่อ transaction; ไม่มี handler สำหรับ `Type` นั้น นับเป็นล้มเหลว; การเพิ่ม `Attempts` และบันทึก `LastError` ทำใน transaction แยกหลัง rollback
-- `OrderCancelledHandler`: `EventType = "OrderCancelled"`, `Name = "Inventory.Restock"`; insert `ProcessedMessages` ก่อน ชน PK (2627) → จบโดยไม่ทำอะไร
+ค่าคงที่: topic `shop.events`, DLQ `shop.events.dlq`, consumer group `shop-inventory`, header `message-id` และ `type`, config `Kafka:BootstrapServers`
 
-- [ ] **Step 1: เขียน test ที่ยังไม่ผ่าน**
+- `IOutbox.Add` เพิ่มแถวลง `SharedDbContext` แล้ว `SaveChanges` ภายใน transaction ปัจจุบัน
+- `CancelAsync` ตาม spec 9.3; key ของ event = `orderId`
+- `OutboxRelay.RunOnceAsync` และ `EventConsumer.ConsumeOnceAsync` ตาม spec 10.2
+  - Producer: `Acks.All`, `EnableIdempotence = true`, `MessageTimeoutMs = 5000`
+  - Consumer: `EnableAutoCommit = false`, `AutoOffsetReset.Earliest`; การ insert `ProcessedMessages` ทำใน `EventConsumer` (ไม่ใช่ใน handler) ภายใน transaction เดียวกับ handler
+  - สร้าง topic ทั้งสองตอนเริ่ม ถ้ายังไม่มี (3 partition, replication 1)
+- `OrderCancelledHandler`: `EventType = "OrderCancelled"`, `Name = "Inventory.Restock"`
 
-```csharp
-// helper: Task<OrderDto> Buy(HttpClient c, int productId, int qty);  Task Drain() — เรียก RunOnceAsync จนได้ false
+**Test ใน `CancelTests.cs`** (helper: `Buy(client, productId, qty)`, `Pump()` = เรียก relay จนได้ false แล้วเรียก consumer จนได้ false)
 
-[Fact] public async Task Cancel_returns_stock_after_dispatch() {
-    var c = f.CreateGuest();  var o = await Buy(c, 4, 2);
-    var cancelled = (await (await c.PostKeyedAsync($"/api/orders/{o.Id}/cancel")).Content.ReadFromJsonAsync<OrderDto>())!;
-    Assert.Equal("Cancelled", cancelled.Status);  Assert.NotNull(cancelled.CancelledAt);
-    Assert.Equal((1, 0), await f.StockAsync(4));          // ยังไม่คืนจนกว่า dispatcher จะทำงาน
-    await Drain();
-    Assert.Equal((3, 0), await f.StockAsync(4));  await f.AssertInvariantsAsync();
-}
-[Fact] public async Task Double_cancel_and_two_dispatchers_restock_once() {               // spec 15 กรณี 4
-    var c = f.CreateGuest();  var o = await Buy(c, 4, 2);
-    var rs = await Task.WhenAll(c.PostKeyedAsync($"/api/orders/{o.Id}/cancel"), c.PostKeyedAsync($"/api/orders/{o.Id}/cancel"));
-    Assert.All(rs, r => Assert.Equal(HttpStatusCode.OK, r.StatusCode));
-    Assert.Equal(1, await f.ScalarAsync<int>($"SELECT COUNT(*) FROM shared.OutboxMessages"));
-    await Task.WhenAll(Drain(), Drain());
-    Assert.Equal((3, 0), await f.StockAsync(4));
-}
-[Fact] public async Task Redelivered_message_is_ignored_by_handler() {
-    var c = f.CreateGuest();  var o = await Buy(c, 4, 1);  await c.PostKeyedAsync($"/api/orders/{o.Id}/cancel");  await Drain();
-    await f.ExecAsync($"UPDATE shared.OutboxMessages SET ProcessedAt = NULL");
-    await Drain();
-    Assert.Equal((3, 0), await f.StockAsync(4));
-}
-[Fact] public async Task Another_guest_cannot_cancel() {                                  // spec 15 กรณี 7
-    var o = await Buy(f.CreateGuest(), 4, 1);
-    Assert.Equal(HttpStatusCode.NotFound, (await f.CreateGuest().PostKeyedAsync($"/api/orders/{o.Id}/cancel")).StatusCode);
-    Assert.Equal(0, await f.ScalarAsync<int>($"SELECT COUNT(*) FROM shared.OutboxMessages"));
-}
-[Fact] public async Task Poison_message_stops_after_ten_attempts_and_does_not_block_others() {   // Review Focus 4
-    await f.ExecAsync($"INSERT shared.OutboxMessages (Id, Type, Payload, OccurredAt, Attempts) VALUES ({Guid.NewGuid()}, {"Unknown"}, {"{}"}, {DateTime.UtcNow.AddMinutes(-5)}, 0)");
-    var c = f.CreateGuest();  var o = await Buy(c, 4, 1);  await c.PostKeyedAsync($"/api/orders/{o.Id}/cancel");
-    await Drain();
-    Assert.Equal((3, 0), await f.StockAsync(4));
-    Assert.Equal(10, await f.ScalarAsync<int>($"SELECT Attempts FROM shared.OutboxMessages WHERE Type = {"Unknown"}"));
-}
-```
+| Test | ตรวจว่า |
+|---|---|
+| `Cancel_returns_stock_after_event_is_consumed` | หลัง cancel สถานะ `Cancelled`, stock ยัง `(1,0)`; หลัง `Pump()` เป็น `(3,0)` และ invariant ผ่าน |
+| `Double_cancel_writes_one_event_and_restocks_once` (spec 15 กรณี 4) | cancel พร้อมกันสองครั้งได้ 200 ทั้งคู่, outbox มี 1 แถว, หลัง `Pump()` stock `(3,0)` |
+| `Redelivered_message_is_ignored` | ตั้ง `ProcessedAt = NULL` แล้ว `Pump()` อีกรอบ stock ยัง `(3,0)` |
+| `Another_guest_cannot_cancel` (spec 15 กรณี 7) | 404 และ outbox ว่าง |
+| `Unknown_event_type_goes_to_dlq_and_does_not_block` (Review Focus 4) | แทรกแถว outbox `Type = "Unknown"` ก่อน cancel; หลัง `Pump()` stock `(3,0)` และ topic DLQ มีข้อความที่ header `type` = `Unknown` |
+| `Relay_records_failed_attempt_when_kafka_is_unreachable` | relay ที่ชี้ไป broker ผิด: `RunOnceAsync` ได้ true, `Attempts` = 1, `ProcessedAt` ยัง NULL, `LastError` ไม่ว่าง |
 
-`RunOnceAsync` คืน `true` ทั้งเมื่อสำเร็จและเมื่อล้มเหลวแล้วบันทึก attempt เพื่อให้ `Drain` เดินต่อจนข้อความเสียถึง 10 ครั้ง
-
+- [ ] **Step 1:** เขียน test ที่ยังไม่ผ่าน
 - [ ] **Step 2:** รัน `--filter "FullyQualifiedName~CancelTests"` — FAIL
 - [ ] **Step 3:** เขียนโค้ด
 - [ ] **Step 4:** รัน `dotnet test` ทั้งหมด — PASS
-- [ ] **Step 5:** Commit `feat: outbox dispatcher and order cancellation with restock`
+- [ ] **Step 5:** Commit `feat: outbox relay to kafka, event consumer, order cancellation with restock`
 
 ---
 
@@ -908,7 +884,7 @@ export function useCart(): CartContext;
 
 - `backend/Dockerfile`: `mcr.microsoft.com/dotnet/sdk:10.0` → `mcr.microsoft.com/dotnet/aspnet:10.0`; `USER $APP_UID`; `ASPNETCORE_HTTP_PORTS=8080`; `ENTRYPOINT ["dotnet", "Shop.Api.dll"]`
 - `frontend/Dockerfile`: `node:22-alpine` สาม stage (deps, build, run); คัดลอก `.next/standalone`, `.next/static`, `public`; `USER node`; `PORT=3000`; `CMD ["node", "server.js"]`
-- `docker-compose.yml`: service `mssql` (healthcheck ด้วย `sqlcmd`), `migrate` (image api, command `migrate`, รอ mssql healthy), `api` (รอ `migrate` สำเร็จ, ใช้ login `shop_app`), `web` (`API_ORIGIN=http://api:8080`, เปิด port `3000:3000`); ค่า secret อ่านจาก `.env`; `api` ตั้ง `ForwardedHeaders__KnownNetworks` เป็น subnet ของ compose
+- `docker-compose.yml`: service `mssql` (healthcheck ด้วย `sqlcmd`), `migrate` (image api, command `migrate`, รอ mssql healthy), `kafka` (image `apache/kafka`, โหมด KRaft, healthcheck), `api` (รอ `migrate` สำเร็จและ `kafka` healthy, ใช้ login `shop_app`, `Kafka__BootstrapServers=kafka:9092`), `web` (`API_ORIGIN=http://api:8080`, เปิด port `3000:3000`); ค่า secret อ่านจาก `.env`; `api` ตั้ง `ForwardedHeaders__KnownNetworks` เป็น subnet ของ compose
 - `.env.example`: `MSSQL_SA_PASSWORD`, `APP_DB_PASSWORD`, `CART_SIGNING_KEY` พร้อมคำสั่งสร้างค่า (`openssl rand -base64 32`); ไม่มีค่าจริง
 - `README.md`: สิ่งที่ต้องติดตั้ง, สามโหมดการรันตาม spec 14, วิธีรัน test, ลิงก์ไป spec และแผน
 
@@ -922,7 +898,7 @@ export function useCart(): CartContext;
 ### Task 13: Kubernetes
 
 **Files:**
-- Create: `deploy/k8s/{namespace,mssql,migrate-job,api,web,ingress,networkpolicy,kustomization}.yaml`, `deploy/k8s/secrets.example.env`
+- Create: `deploy/k8s/{namespace,mssql,kafka,migrate-job,api,web,ingress,networkpolicy,kustomization}.yaml`, `deploy/k8s/secrets.example.env`
 - Modify: `README.md` (หัวข้อ Kubernetes)
 
 ค่าที่ต้องตรงตามนี้ (นอกเหนือจาก spec 11.6, 11.7, 13)
@@ -932,7 +908,8 @@ export function useCart(): CartContext;
 | ทุก resource | namespace `shop`; label `app.kubernetes.io/name` |
 | Image | `shop-api:local`, `shop-web:local`; `imagePullPolicy: IfNotPresent` |
 | `mssql` | `fsGroup: 10001`; PVC 5Gi ที่ `/var/opt/mssql`; requests 1 CPU / 2Gi |
-| `api` | port 8080; requests 100m / 256Mi, limits 500m / 512Mi; `emptyDir` ที่ `/tmp`; env `ConnectionStrings__Shop` (login `shop_app`), `CART_SIGNING_KEY`, `ForwardedHeaders__KnownNetworks=10.0.0.0/8` |
+| `kafka` | StatefulSet 1 replica, image `apache/kafka`, KRaft (broker+controller ใน pod เดียว), PVC 2Gi, Service port 9092, advertised listener `kafka.shop.svc:9092`; requests 250m / 512Mi |
+| `api` | port 8080; requests 100m / 256Mi, limits 500m / 512Mi; `emptyDir` ที่ `/tmp`; env `ConnectionStrings__Shop` (login `shop_app`), `CART_SIGNING_KEY`, `Kafka__BootstrapServers=kafka.shop.svc:9092`, `ForwardedHeaders__KnownNetworks=10.0.0.0/8` |
 | `web` | port 3000; requests 100m / 256Mi, limits 500m / 512Mi; `emptyDir` ที่ `/tmp` และ `/app/.next/cache`; env `API_ORIGIN=http://api.shop.svc:8080` |
 | Pod security (`api`, `web`) | `runAsNonRoot: true`, `readOnlyRootFilesystem: true`, `allowPrivilegeEscalation: false`, `capabilities.drop: [ALL]`, `seccompProfile: RuntimeDefault` |
 | `migrate-job` | image `shop-api:local`, args `["migrate"]`, ใช้ `sa`, `backoffLimit: 6`, `ttlSecondsAfterFinished: 600` |
