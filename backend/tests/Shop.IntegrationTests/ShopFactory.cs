@@ -44,9 +44,13 @@ public sealed class ShopFactory : WebApplicationFactory<Program>, IAsyncLifetime
 
     public T Service<T>() where T : notnull => Services.CreateScope().ServiceProvider.GetRequiredService<T>();
 
-    public Task ResetAsync() => ExecAsync($"""
+    public Task ResetAsync() => ExecRawAsync("""
         DELETE shared.OutboxMessages; DELETE shared.ProcessedMessages; DELETE shared.IdempotencyKeys;
-        """);
+        UPDATE s SET OnHand = v.OnHand, Reserved = 0
+        FROM inventory.Stock s JOIN (VALUES {SeedStockValues}) v(ProductId, OnHand) ON v.ProductId = s.ProductId;
+        """.Replace("{SeedStockValues}", string.Join(",", SeedOnHand.Select((onHand, i) => $"({i + 1},{onHand})"))));
+
+    public static readonly int[] SeedOnHand = [25, 12, 40, 3, 8, 60, 1, 30, 100, 5, 0, 2];
 
     public async Task<(int OnHand, int Reserved)> StockAsync(int productId)
     {
@@ -60,6 +64,14 @@ public sealed class ShopFactory : WebApplicationFactory<Program>, IAsyncLifetime
     {
         await using var cmd = await CommandAsync(sql);
         return (T)(await cmd.ExecuteScalarAsync())!;
+    }
+
+    private async Task ExecRawAsync(string sql)
+    {
+        await using var connection = new SqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var cmd = new SqlCommand(sql, connection);
+        await cmd.ExecuteNonQueryAsync();
     }
 
     public async Task ExecAsync(FormattableString sql)
