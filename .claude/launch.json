@@ -1,7 +1,0 @@
-{
-  "version": "0.0.1",
-  "configurations": [
-    { "name": "api", "runtimeExecutable": "powershell", "runtimeArgs": ["-ExecutionPolicy", "Bypass", "-File", "scripts/dev-api.ps1"], "port": 5080 },
-    { "name": "web", "runtimeExecutable": "npm", "runtimeArgs": ["--prefix", "frontend", "run", "dev"], "port": 3000 }
-  ]
-}
