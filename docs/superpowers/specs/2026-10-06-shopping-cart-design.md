@@ -87,6 +87,7 @@ Browser ──HTTPS──> Traefik Ingress (load balancer, TLS, rate limit, secu
 - เว็บและ API อยู่ origin เดียวกัน จึงไม่เปิด CORS
 - Pod `api` ไม่เก็บ state ในหน่วยความจำ ทุก pod ทำงานแทนกันได้
 - ตอน dev ไม่มี ingress: Next.js ส่งต่อ `/api/*` ไปที่ API ผ่าน `rewrites` ตามตัวแปร `API_ORIGIN`
+- Server component ของ Next.js ดึงรายการสินค้าจาก API โดยตรงภายใน cluster ผ่าน `API_ORIGIN` (ใน Kubernetes คือ `http://api.shop.svc`) จึงต้องตั้ง `API_ORIGIN` ในทุกสภาพแวดล้อม
 
 ### 5.2 โมดูล
 
@@ -113,7 +114,8 @@ Browser ──HTTPS──> Traefik Ingress (load balancer, TLS, rate limit, secu
 
 - Isolation level: `READ COMMITTED`
 - เมื่อปรับ stock หลายสินค้าในครั้งเดียว ให้เรียงตาม `ProductId` เสมอ เพื่อลด deadlock
-- ถ้าเจอ deadlock (SQL error 1205) ให้ทำ transaction ใหม่ทั้งก้อน สูงสุด 3 ครั้ง
+- ถ้าเจอ deadlock (SQL error 1205) ให้ทำ transaction ใหม่ทั้งก้อน สูงสุด 3 ครั้ง โดยเขียน retry เองรอบ `UnitOfWork` **ห้ามเปิด `EnableRetryOnFailure` ของ EF Core** เพราะมันโยน exception เมื่อเจอ transaction ที่เราเปิดเอง
+- แต่ละโมดูลมีตารางประวัติ migration ของตัวเองใน schema ของตัวเอง (`MigrationsHistoryTable`)
 
 ### 5.4 เส้นทางแยกเป็น microservice
 
@@ -219,7 +221,7 @@ Seed ผ่าน EF Core `HasData` ใน migration: สินค้า 12 ร�
 
 - Base path: `/api`
 - Body เป็น JSON (`Content-Type: application/json`)
-- ตัวตน: cookie `sid` (ข้อ 11.1) ถ้า request ไม่มี cookie ที่ถูกต้อง ระบบออกให้ใหม่
+- ตัวตน: cookie `sid` (ข้อ 11.1) endpoint ของตะกร้าและออเดอร์ออก cookie ใหม่ให้เมื่อ request ไม่มี cookie ที่ถูกต้อง ส่วน `GET /products` ไม่ใช้และไม่ออก cookie
 - Error ใช้รูปแบบ ProblemDetails (RFC 9457) และมี field `code`
 
 | Method | Path | ทำอะไร | Idempotency-Key | สำเร็จ |
@@ -381,9 +383,12 @@ Frontend สร้าง key ด้วย `crypto.randomUUID()` หนึ่ง 
 ### 11.3 Cross-site scripting (XSS)
 
 - แสดงข้อมูลผ่าน JSX ของ React เท่านั้น ซึ่ง escape ให้อัตโนมัติ **ห้ามใช้ `dangerouslySetInnerHTML`, `innerHTML`, หรือ `eval`**
-- `Content-Security-Policy` แบบ nonce ต่อ request ตั้งใน Next.js middleware:
-  `default-src 'self'; script-src 'self' 'nonce-…' 'strict-dynamic'; style-src 'self' 'nonce-…'; img-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`
-  ไม่มี `'unsafe-inline'` และ `'unsafe-eval'` ใน production
+- `Content-Security-Policy` แบบ nonce ต่อ request ตั้งใน Next.js middleware (ใน Next.js 16 ขึ้นไปไฟล์นี้ชื่อ `proxy.ts`):
+  `default-src 'self'; script-src 'self' 'nonce-…' 'strict-dynamic'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`
+  - `script-src` ไม่มี `'unsafe-inline'` และ `'unsafe-eval'` ใน production
+  - `style-src` ยอม `'unsafe-inline'` เพราะ component ของ shadcn/ui (Radix, Sonner) ใส่ style ตอน runtime ซึ่ง nonce ครอบไม่ถึง ความเสี่ยงจาก style ต่ำกว่า script มาก
+  - CSP ของหน้าเว็บตั้งที่ Next.js **ที่เดียว** ห้ามตั้งซ้ำที่ Traefik เพราะ browser จะบังคับใช้ทั้งสองชุดและ nonce จะใช้ไม่ได้
+  - ระหว่างพัฒนาต้องดู console ของ browser ว่าไม่มี CSP violation
 - `ImageUrl` ต้องเป็น path ที่ขึ้นต้นด้วย `/products/` เท่านั้น ตรวจทั้งใน CHECK constraint ของฐานข้อมูลและก่อน render กัน URL แบบ `javascript:` และรูปจากภายนอก
 - API ตอบเป็น `application/json` พร้อม `X-Content-Type-Options: nosniff` เสมอ browser จึงไม่ตีความ response เป็น HTML
 - Cookie `sid` เป็น `HttpOnly` สคริปต์อ่านไม่ได้ แม้มี XSS หลุดเข้ามา
@@ -402,7 +407,7 @@ Frontend สร้าง key ด้วย `crypto.randomUUID()` หนึ่ง 
   - API (ต่อ IP เพราะ guest เปลี่ยน cookie ได้เอง): แก้ตะกร้า 30 ครั้งต่อนาที, ชำระเงินและยกเลิก 5 ครั้งต่อนาที
   - ตัวนับใน API อยู่ในหน่วยความจำของแต่ละ pod เพดานจริงจึงเท่ากับค่าที่ตั้งคูณจำนวน pod
 - API เชื่อ header `X-Forwarded-For` จาก Traefik เท่านั้น
-- **Header ความปลอดภัย:** `Strict-Transport-Security`, `Content-Security-Policy` (ข้อ 11.3), `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`
+- **Header ความปลอดภัยที่ Traefik ใส่:** `Strict-Transport-Security`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin` ส่วน CSP ตั้งที่ Next.js (ข้อ 11.3)
 - TLS สิ้นสุดที่ Traefik; HTTP ถูก redirect ไป HTTPS
 - Error ที่ไม่คาดคิดตอบ 500 แบบ ProblemDetails ที่ไม่มี stack trace รายละเอียดอยู่ใน log เท่านั้น
 - Log ไม่บันทึกค่า cookie, กุญแจ, หรือ connection string
@@ -411,12 +416,14 @@ Frontend สร้าง key ด้วย `crypto.randomUUID()` หนึ่ง 
 
 - Secret ทั้งหมด (`SA_PASSWORD`, `APP_DB_PASSWORD`, `CART_SIGNING_KEY`) อยู่ใน Kubernetes Secret ที่สร้างจากไฟล์ `deploy/k8s/secrets.env` ซึ่งอยู่ใน `.gitignore` ใน repo มีแค่ `secrets.example.env`
 - Container ของ `api` และ `web`: รันด้วย user ที่ไม่ใช่ root, `readOnlyRootFilesystem: true`, `allowPrivilegeEscalation: false`, drop capabilities ทั้งหมด, กำหนด resource requests และ limits
+- เพราะ filesystem อ่านได้อย่างเดียว ต้อง mount `emptyDir` ที่ `/tmp` ของ `api` และ `web` และที่ `/app/.next/cache` ของ `web`
+- Image ของ SQL Server 2022 รันด้วย uid 10001 StatefulSet จึงต้องตั้ง `fsGroup: 10001` ไม่เช่นนั้นเขียน PVC ไม่ได้
 - Image แบบ multi-stage; image ที่รันจริงไม่มี SDK
 
 ### 11.7 NetworkPolicy
 
 - ค่าเริ่มต้น: ปิดการเข้าออกทั้งหมดใน namespace `shop`
-- อนุญาต: Traefik → `web` และ `api`; `api` และ migration Job → `mssql`; ทุก pod → DNS
+- อนุญาต: Traefik → `web` และ `api`; `web` → `api`; `api` และ migration Job → `mssql`; ทุก pod → DNS
 
 ## 12. Frontend
 
@@ -496,7 +503,7 @@ Manifest อยู่ใน `deploy/k8s/` จัดการด้วย Kustomi
 | Compose ทั้งชุด | `docker compose up --build` | ลองทั้งระบบโดยไม่ใช้ Kubernetes |
 | Kubernetes | build image สองตัว แล้ว `kubectl apply -k deploy/k8s` | ทดสอบ deploy จริง |
 
-ค่าที่ตั้งได้ผ่าน environment variable: `ConnectionStrings__Shop`, `CART_SIGNING_KEY`, `Cart__ReservationMinutes` (ค่าเริ่มต้น 15), `API_ORIGIN` (ฝั่ง frontend ตอน dev)
+ค่าที่ตั้งได้ผ่าน environment variable: `ConnectionStrings__Shop`, `CART_SIGNING_KEY`, `Cart__ReservationMinutes` (ค่าเริ่มต้น 15), `API_ORIGIN` (ฝั่ง frontend, ทุกสภาพแวดล้อม)
 
 ## 15. การทดสอบ
 
@@ -516,7 +523,7 @@ Integration test รันกับ SQL Server จริงผ่าน Testcont
 | 10 | ชำระเงินขณะตะกร้าว่าง | 400 `cart_empty` |
 | 11 | ส่ง payload SQL injection (`1; DROP TABLE ...`, `' OR 1=1--`) ใน path, body, และ `Idempotency-Key` | 400 หรือ 404, ตารางและข้อมูลไม่เปลี่ยน |
 | 12 | สินค้าที่ชื่อมี `<script>alert(1)</script>` (ใส่ตรงในฐานข้อมูลทดสอบ) | API คืนเป็นข้อความใน JSON, หน้าเว็บแสดงเป็นตัวอักษร สคริปต์ไม่ทำงาน |
-| 13 | ตรวจ response header ของหน้าเว็บและ API | มี CSP ที่ไม่มี `unsafe-inline`, `nosniff`, HSTS |
+| 13 | ตรวจ response header ของหน้าเว็บและ API | มี CSP ที่ `script-src` ไม่มี `unsafe-inline` และ `unsafe-eval`, มี `nosniff` และ HSTS |
 
 **ตรวจโค้ดอัตโนมัติ:** build ล้มเหลวถ้าพบ `ExecuteSqlRaw`, `FromSqlRaw`, หรือ `dangerouslySetInnerHTML` ในซอร์ส (ตรวจด้วย `git grep` ใน test หนึ่งตัว)
 
