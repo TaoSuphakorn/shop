@@ -9,5 +9,7 @@ public static class SharedModule
         services
             .AddScoped<UnitOfWork>()
             .AddModuleDbContext<SharedDbContext>("shared")
-            .AddSingleton(sp => GuestKey.FromBase64(sp.GetRequiredService<IConfiguration>()["CART_SIGNING_KEY"]));
+            .AddSingleton(sp => GuestKey.FromBase64(sp.GetRequiredService<IConfiguration>()["CART_SIGNING_KEY"]))
+            .AddSingleton<IdempotencyCleanup>()
+            .AddHostedService(sp => sp.GetRequiredService<IdempotencyCleanup>());
 }

@@ -25,7 +25,8 @@ public static class CartModule
             service.GetAsync(http.GetGuestId(), ct));
 
         cart.MapPost("/items", async (AddItemRequest request, HttpContext http, CartService service, CancellationToken ct) =>
-            TypedResults.Ok(await service.AddAsync(http.GetGuestId(), request.ProductId, request.Quantity, ct)));
+            TypedResults.Ok(await service.AddAsync(http.GetGuestId(), request.ProductId, request.Quantity, ct)))
+            .RequireIdempotencyKey();
 
         cart.MapPut("/items/{productId:int}", (int productId, SetQuantityRequest request, HttpContext http, CartService service, CancellationToken ct) =>
             service.SetQuantityAsync(http.GetGuestId(), productId, request.Quantity, ct));
