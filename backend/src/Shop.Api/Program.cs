@@ -21,6 +21,8 @@ if (args.Contains("migrate"))
     return;
 }
 
+app.Services.GetRequiredService<GuestKey>();   // fail fast when the signing key is missing or weak
+
 app.UseShopErrors();
 
 app.MapCatalogEndpoints();
