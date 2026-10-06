@@ -34,7 +34,7 @@ public static class OrderRules
             .Select(i => new OrderItemDto(i.ProductId, i.Sku, i.Name, i.UnitPrice, i.Quantity, i.LineTotal)).ToList());
 }
 
-public sealed class OrderService(OrderingDbContext db, UnitOfWork unitOfWork, ICartApi cart, ICatalogApi catalog, IInventoryApi inventory)
+public sealed class OrderService(OrderingDbContext db, UnitOfWork unitOfWork, ICartApi cart, ICatalogApi catalog, IInventoryApi inventory, IOutbox outbox)
 {
     /// <summary>
     /// Checkout (spec 9.2), all in one transaction: take the cart, price it from the catalog,
@@ -50,6 +50,26 @@ public sealed class OrderService(OrderingDbContext db, UnitOfWork unitOfWork, IC
             db.Orders.Add(order);
             await db.SaveChangesAsync(c);
             return OrderRules.ToDto(order);
+        }, ct);
+
+    /// <summary>
+    /// Cancel (spec 9.3). The conditional UPDATE is the state machine: only one request can move an order
+    /// from Paid to Cancelled, so exactly one OrderCancelled event is written however often cancel is called.
+    /// Stock comes back when Inventory consumes that event from Kafka.
+    /// </summary>
+    public Task<OrderDto> CancelAsync(Guid guestId, Guid orderId, CancellationToken ct) =>
+        unitOfWork.ExecuteAsync(async c =>
+        {
+            var cancelledNow = await db.Database.ExecuteSqlInterpolatedAsync($"""
+                UPDATE ordering.Orders SET Status = {Order.Cancelled}, CancelledAt = {DateTime.UtcNow}
+                WHERE Id = {orderId} AND GuestId = {guestId} AND Status = {Order.Paid}
+                """, c) == 1;
+
+            var order = await GetAsync(guestId, orderId, c);   // 404 when it is not this guest's order
+            if (cancelledNow)
+                await outbox.AddAsync(orderId.ToString(),
+                    new OrderCancelled(orderId, order.Items.Select(i => new StockLine(i.ProductId, i.Quantity)).ToList()), c);
+            return order;
         }, ct);
 
     /// <summary>Someone else's order is reported exactly like a missing one, so ids cannot be probed.</summary>

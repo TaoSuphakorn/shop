@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
 using Shop.Api;
+using Testcontainers.Kafka;
 using Testcontainers.MsSql;
 
 namespace Shop.IntegrationTests;
@@ -14,6 +15,10 @@ public sealed class ShopFactory : WebApplicationFactory<Program>, IAsyncLifetime
 {
     private readonly MsSqlContainer _sql = new MsSqlBuilder("mcr.microsoft.com/mssql/server:2022-latest").Build();
 
+    private readonly KafkaContainer _kafka = new KafkaBuilder("apache/kafka:3.9.1").Build();
+
+    public string KafkaBootstrapServers => _kafka.GetBootstrapAddress();
+
     private string ConnectionString =>
         new SqlConnectionStringBuilder(_sql.GetConnectionString()) { InitialCatalog = "Shop" }.ConnectionString;
 
@@ -22,6 +27,7 @@ public sealed class ShopFactory : WebApplicationFactory<Program>, IAsyncLifetime
         builder.UseEnvironment("Testing");
         builder.UseSetting("ConnectionStrings:Shop", ConnectionString);
         builder.UseSetting("CART_SIGNING_KEY", Convert.ToBase64String(new byte[32].Select((_, i) => (byte)i).ToArray()));
+        builder.UseSetting("Kafka:BootstrapServers", KafkaBootstrapServers);
         builder.UseSetting("BackgroundJobs:Enabled", "false");
         builder.UseSetting("RateLimit:CartPerMinute", "100000");
         builder.UseSetting("RateLimit:CheckoutPerMinute", "100000");
@@ -29,7 +35,7 @@ public sealed class ShopFactory : WebApplicationFactory<Program>, IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        await _sql.StartAsync();
+        await Task.WhenAll(_sql.StartAsync(), _kafka.StartAsync());
         await DbProvisioner.RunAsync(Services);
         await ExecRawAsync("SELECT * INTO dbo.ProductsSeed FROM catalog.Products");   // snapshot for ResetAsync
     }
@@ -38,6 +44,7 @@ public sealed class ShopFactory : WebApplicationFactory<Program>, IAsyncLifetime
     {
         await base.DisposeAsync();
         await _sql.DisposeAsync();
+        await _kafka.DisposeAsync();
     }
 
     public HttpClient CreateGuest() =>

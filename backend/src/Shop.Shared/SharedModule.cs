@@ -10,6 +10,11 @@ public static class SharedModule
             .AddScoped<UnitOfWork>()
             .AddModuleDbContext<SharedDbContext>("shared")
             .AddSingleton(sp => GuestKey.FromBase64(sp.GetRequiredService<IConfiguration>()["CART_SIGNING_KEY"]))
+            .AddScoped<IOutbox, Outbox>()
+            .AddSingleton<OutboxRelay>()
+            .AddHostedService(sp => sp.GetRequiredService<OutboxRelay>())
+            .AddSingleton<EventConsumer>()
+            .AddHostedService(sp => sp.GetRequiredService<EventConsumer>())
             .AddSingleton<IdempotencyCleanup>()
             .AddHostedService(sp => sp.GetRequiredService<IdempotencyCleanup>());
 }

@@ -372,11 +372,11 @@ Ordering ──(transaction เดียวกับออเดอร์)──
 
 **OutboxRelay:** `BackgroundService` ในทุก pod วนทุก 1 วินาที ส่งทีละข้อความ หนึ่งข้อความต่อหนึ่ง transaction:
 
-1. `SELECT TOP 1 ... FROM shared.OutboxMessages WITH (UPDLOCK, READPAST, ROWLOCK) WHERE ProcessedAt IS NULL AND Attempts < 10 ORDER BY OccurredAt`
+1. `SELECT TOP 1 ... FROM shared.OutboxMessages WITH (UPDLOCK, READPAST, ROWLOCK) WHERE ProcessedAt IS NULL ORDER BY Attempts, OccurredAt`
 2. Publish เข้า Kafka และรอ broker ยืนยัน (`acks=all`, `enable.idempotence=true`)
 3. ตั้ง `ProcessedAt` แล้ว commit
 
-ถ้า publish ล้มเหลว (เช่น Kafka ล่ม): rollback แล้วเพิ่ม `Attempts` และบันทึก `LastError` ใน transaction แยก ข้อความยังอยู่ในตารางและถูกส่งใหม่รอบถัดไป ข้อความที่ `Attempts` ถึง 10 จะถูกข้ามและ log ระดับ error เพื่อให้คนเข้ามาดู
+ถ้า publish ล้มเหลว (เช่น Kafka ล่ม): เพิ่ม `Attempts` และบันทึก `LastError` ข้อความยังอยู่ในตารางและถูกส่งใหม่ไปเรื่อย ๆ **ไม่มีเพดานจำนวนครั้ง** เพราะความล้มเหลวช่วงนี้เกือบทั้งหมดเป็นปัญหาโครงสร้างพื้นฐาน ข้อความที่เคยล้มเหลวถูกเรียงไปท้ายคิว (`ORDER BY Attempts`) จึงไม่ขวางข้อความอื่น เมื่อ `Attempts` ถึง 10 ระบบ log ระดับ error เพื่อให้คนเข้ามาดู
 
 **Consumer:** `BackgroundService` ในทุก pod ใช้ consumer group `shop-inventory`, `enable.auto.commit=false`:
 
