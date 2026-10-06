@@ -26,16 +26,20 @@ public static class CartModule
 
         cart.MapPost("/items", async (AddItemRequest request, HttpContext http, CartService service, CancellationToken ct) =>
             TypedResults.Ok(await service.AddAsync(http.GetGuestId(), request.ProductId, request.Quantity, ct)))
-            .RequireIdempotencyKey();
+            .RequireIdempotencyKey()
+            .RequireRateLimiting(RateLimits.Cart);
 
         cart.MapPut("/items/{productId:int}", (int productId, SetQuantityRequest request, HttpContext http, CartService service, CancellationToken ct) =>
-            service.SetQuantityAsync(http.GetGuestId(), productId, request.Quantity, ct));
+            service.SetQuantityAsync(http.GetGuestId(), productId, request.Quantity, ct))
+            .RequireRateLimiting(RateLimits.Cart);
 
         cart.MapDelete("/items/{productId:int}", (int productId, HttpContext http, CartService service, CancellationToken ct) =>
-            service.RemoveAsync(http.GetGuestId(), productId, ct));
+            service.RemoveAsync(http.GetGuestId(), productId, ct))
+            .RequireRateLimiting(RateLimits.Cart);
 
         cart.MapDelete("/", (HttpContext http, CartService service, CancellationToken ct) =>
-            service.ClearAsync(http.GetGuestId(), ct));
+            service.ClearAsync(http.GetGuestId(), ct))
+            .RequireRateLimiting(RateLimits.Cart);
 
         return app;
     }

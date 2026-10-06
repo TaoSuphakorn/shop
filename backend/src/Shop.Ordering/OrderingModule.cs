@@ -23,14 +23,16 @@ public static class OrderingModule
                 var order = await service.CheckoutAsync(http.GetGuestId(), ct);
                 return TypedResults.Created($"/api/orders/{order.Id}", order);
             })
-            .RequireIdempotencyKey();
+            .RequireIdempotencyKey()
+            .RequireRateLimiting(RateLimits.Checkout);
 
         orders.MapGet("/{id:guid}", (Guid id, HttpContext http, OrderService service, CancellationToken ct) =>
             service.GetAsync(http.GetGuestId(), id, ct));
 
         orders.MapPost("/{id:guid}/cancel", async (Guid id, HttpContext http, OrderService service, CancellationToken ct) =>
                 TypedResults.Ok(await service.CancelAsync(http.GetGuestId(), id, ct)))
-            .RequireIdempotencyKey();
+            .RequireIdempotencyKey()
+            .RequireRateLimiting(RateLimits.Checkout);
 
         return app;
     }
