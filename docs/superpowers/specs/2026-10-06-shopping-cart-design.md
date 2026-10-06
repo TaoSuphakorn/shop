@@ -1,9 +1,9 @@
 # Spec: ระบบร้านค้า — สต๊อกสินค้าและตะกร้าสินค้า
 
-| | |
-|---|---|
-| วันที่ | 2026-10-06 |
-| สถานะ | รออนุมัติ |
+|         |                                       |
+| ------- | ------------------------------------- |
+| วันที่  | 2026-10-06                            |
+| สถานะ   | รออนุมัติ                             |
 | ผู้อ่าน | นักพัฒนาที่จะลงมือสร้างหรือรับช่วงต่อ |
 
 ## 1. เป้าหมาย
@@ -25,25 +25,25 @@
 
 ## 2. การตัดสินใจหลัก
 
-| เรื่อง | ตัดสินใจ | เหตุผล |
-|---|---|---|
-| สถาปัตยกรรม | Modular monolith ที่แยกเป็น microservice ได้ภายหลัง | deploy ก้อนเดียว scale แนวนอนได้ ไม่ต้องมี distributed transaction |
-| ตัวตนลูกค้า | Guest ผ่าน cookie ที่เซ็นกำกับ | โจทย์ไม่ต้องการระบบสมาชิก |
-| จังหวะตัด stock | จองเมื่อเพิ่มลงตะกร้า ตัดจริงเมื่อชำระเงิน | โจทย์กำหนดให้ตะกร้าปรับยอด stock |
-| ตะกร้าถูกทิ้ง | คืนการจองหลังนิ่ง 15 นาที | กัน stock ค้างในตะกร้าที่ไม่มีคนซื้อ |
-| การชำระเงิน | จำลอง: กดแล้วถือว่าจ่ายสำเร็จ | โจทย์ต้องการแค่แสดงยอดและตัด stock |
-| Outbox | ตารางใน SQL Server + ตัว dispatch ใน process | ไม่ต้องดูแล broker เพิ่ม |
-| Ingress controller | Traefik | โครงการ ingress-nginx ยุติการดูแลตั้งแต่มีนาคม 2026 |
+| เรื่อง             | ตัดสินใจ                                            | เหตุผล                                                             |
+| ------------------ | --------------------------------------------------- | ------------------------------------------------------------------ |
+| สถาปัตยกรรม        | Modular monolith ที่แยกเป็น microservice ได้ภายหลัง | deploy ก้อนเดียว scale แนวนอนได้ ไม่ต้องมี distributed transaction |
+| ตัวตนลูกค้า        | Guest ผ่าน cookie ที่เซ็นกำกับ                      | โจทย์ไม่ต้องการระบบสมาชิก                                          |
+| จังหวะตัด stock    | จองเมื่อเพิ่มลงตะกร้า ตัดจริงเมื่อชำระเงิน          | โจทย์กำหนดให้ตะกร้าปรับยอด stock                                   |
+| ตะกร้าถูกทิ้ง      | คืนการจองหลังนิ่ง 15 นาที                           | กัน stock ค้างในตะกร้าที่ไม่มีคนซื้อ                               |
+| การชำระเงิน        | จำลอง: กดแล้วถือว่าจ่ายสำเร็จ                       | โจทย์ต้องการแค่แสดงยอดและตัด stock                                 |
+| Outbox             | ตารางใน SQL Server + ตัว dispatch ใน process        | ไม่ต้องดูแล broker เพิ่ม                                           |
+| Ingress controller | Traefik                                             | โครงการ ingress-nginx ยุติการดูแลตั้งแต่มีนาคม 2026                |
 
 ## 3. Tech stack
 
-| ส่วน | เทคโนโลยี |
-|---|---|
-| Frontend | Next.js (App Router, TypeScript), Tailwind CSS, shadcn/ui |
-| Backend | .NET 10, ASP.NET Core Minimal API, EF Core |
-| Database | SQL Server 2022 |
-| ทดสอบ | xUnit, `WebApplicationFactory`, Testcontainers (SQL Server จริง) |
-| รัน | Docker, docker compose (dev), Kubernetes + Kustomize |
+| ส่วน     | เทคโนโลยี                                                        |
+| -------- | ---------------------------------------------------------------- |
+| Frontend | Next.js (App Router, TypeScript), Tailwind CSS, shadcn/ui        |
+| Backend  | .NET 10, ASP.NET Core Minimal API, EF Core                       |
+| Database | SQL Server 2022                                                  |
+| ทดสอบ    | xUnit, `WebApplicationFactory`, Testcontainers (SQL Server จริง) |
+| รัน      | Docker, docker compose (dev), Kubernetes + Kustomize             |
 
 shadcn/ui คือ component ที่ copy เข้ามาอยู่ในโปรเจกต์ จึงแก้ได้เต็มที่และไม่มี runtime library เพิ่ม ใช้เฉพาะ: Button, Card, Badge, Sheet, Skeleton, Sonner (toast), AlertDialog
 
@@ -93,13 +93,13 @@ Browser ──HTTPS──> Traefik Ingress (load balancer, TLS, rate limit, secu
 
 แต่ละโมดูลเป็น class library หนึ่งตัว มี SQL schema ของตัวเอง มี `DbContext` ของตัวเอง และเปิดเผยตัวเองผ่านสองทางเท่านั้น: HTTP endpoint และ interface ใน `Shop.Shared/Contracts`
 
-| โมดูล | schema | หน้าที่ | Contract ที่ให้โมดูลอื่นเรียก |
-|---|---|---|---|
-| Catalog | `catalog` | ข้อมูลสินค้า | `ICatalogApi.GetProducts(ids)` |
-| Inventory | `inventory` | stock และการจอง | `IInventoryApi.Reserve / Release / Commit / GetAvailability` |
-| Cart | `cart` | ตะกร้า, หมดอายุการจอง | `ICartApi.TakeItemsForCheckout(guestId)` |
-| Ordering | `ordering` | ชำระเงิน, ยกเลิก | ไม่มี (ส่ง event `OrderCancelled`) |
-| Shared | `shared` | outbox, idempotency | — |
+| โมดูล     | schema      | หน้าที่               | Contract ที่ให้โมดูลอื่นเรียก                                |
+| --------- | ----------- | --------------------- | ------------------------------------------------------------ |
+| Catalog   | `catalog`   | ข้อมูลสินค้า          | `ICatalogApi.GetProducts(ids)`                               |
+| Inventory | `inventory` | stock และการจอง       | `IInventoryApi.Reserve / Release / Commit / GetAvailability` |
+| Cart      | `cart`      | ตะกร้า, หมดอายุการจอง | `ICartApi.TakeItemsForCheckout(guestId)`                     |
+| Ordering  | `ordering`  | ชำระเงิน, ยกเลิก      | ไม่มี (ส่ง event `OrderCancelled`)                           |
+| Shared    | `shared`    | outbox, idempotency   | —                                                            |
 
 **กฎขอบเขตโมดูล (ห้ามละเมิด)**
 
@@ -132,63 +132,63 @@ Browser ──HTTPS──> Traefik Ingress (load balancer, TLS, rate limit, secu
 
 ### catalog.Products
 
-| คอลัมน์ | ชนิด | หมายเหตุ |
-|---|---|---|
-| Id | int | PK |
-| Sku | nvarchar(32) | unique, รหัสสินค้า |
-| Name | nvarchar(200) | |
-| Description | nvarchar(1000) | |
-| Price | decimal(18,2) | CHECK `Price >= 0`, ราคาขายต่อหน่วย |
-| ImageUrl | nvarchar(300) | path ของไฟล์ static ใน frontend; CHECK `ImageUrl LIKE '/products/%'` |
+| คอลัมน์     | ชนิด           | หมายเหตุ                                                             |
+| ----------- | -------------- | -------------------------------------------------------------------- |
+| Id          | int            | PK                                                                   |
+| Sku         | nvarchar(32)   | unique, รหัสสินค้า                                                   |
+| Name        | nvarchar(200)  |                                                                      |
+| Description | nvarchar(1000) |                                                                      |
+| Price       | decimal(18,2)  | CHECK `Price >= 0`, ราคาขายต่อหน่วย                                  |
+| ImageUrl    | nvarchar(300)  | path ของไฟล์ static ใน frontend; CHECK `ImageUrl LIKE '/products/%'` |
 
 ### inventory.Stock
 
-| คอลัมน์ | ชนิด | หมายเหตุ |
-|---|---|---|
-| ProductId | int | PK |
-| OnHand | int | ของที่ยังไม่ถูกขาย |
-| Reserved | int | ของที่อยู่ในตะกร้าลูกค้า |
+| คอลัมน์   | ชนิด | หมายเหตุ                 |
+| --------- | ---- | ------------------------ |
+| ProductId | int  | PK                       |
+| OnHand    | int  | ของที่ยังไม่ถูกขาย       |
+| Reserved  | int  | ของที่อยู่ในตะกร้าลูกค้า |
 
 - CHECK `OnHand >= 0`, `Reserved >= 0`, `Reserved <= OnHand`
 - **คงเหลือที่ขายได้ (Available) = OnHand − Reserved**
 
 ### cart.Carts และ cart.CartItems
 
-| ตาราง | คอลัมน์ | หมายเหตุ |
-|---|---|---|
-| Carts | GuestId uniqueidentifier | PK |
-| | ExpiresAt datetime2 | index; เลื่อนเป็น "ตอนนี้ + 15 นาที" ทุกครั้งที่ตะกร้าเปลี่ยน |
-| CartItems | GuestId, ProductId | PK ร่วม |
-| | Quantity int | CHECK `Quantity BETWEEN 1 AND 99` |
+| ตาราง     | คอลัมน์                  | หมายเหตุ                                                      |
+| --------- | ------------------------ | ------------------------------------------------------------- |
+| Carts     | GuestId uniqueidentifier | PK                                                            |
+|           | ExpiresAt datetime2      | index; เลื่อนเป็น "ตอนนี้ + 15 นาที" ทุกครั้งที่ตะกร้าเปลี่ยน |
+| CartItems | GuestId, ProductId       | PK ร่วม                                                       |
+|           | Quantity int             | CHECK `Quantity BETWEEN 1 AND 99`                             |
 
 ตะกร้าหนึ่งมีได้สูงสุด 50 รายการ
 
 ### ordering.Orders และ ordering.OrderItems
 
-| ตาราง | คอลัมน์ | หมายเหตุ |
-|---|---|---|
-| Orders | Id uniqueidentifier | PK |
-| | GuestId uniqueidentifier | index; เจ้าของออเดอร์ |
-| | Status nvarchar(16) | `Paid` หรือ `Cancelled` |
-| | Total decimal(18,2) | |
-| | CreatedAt, CancelledAt | CancelledAt เป็น null ได้ |
-| OrderItems | OrderId, ProductId | PK ร่วม |
-| | Sku, Name, UnitPrice | สำเนา ณ เวลาที่ซื้อ |
-| | Quantity, LineTotal | |
+| ตาราง      | คอลัมน์                  | หมายเหตุ                  |
+| ---------- | ------------------------ | ------------------------- |
+| Orders     | Id uniqueidentifier      | PK                        |
+|            | GuestId uniqueidentifier | index; เจ้าของออเดอร์     |
+|            | Status nvarchar(16)      | `Paid` หรือ `Cancelled`   |
+|            | Total decimal(18,2)      |                           |
+|            | CreatedAt, CancelledAt   | CancelledAt เป็น null ได้ |
+| OrderItems | OrderId, ProductId       | PK ร่วม                   |
+|            | Sku, Name, UnitPrice     | สำเนา ณ เวลาที่ซื้อ       |
+|            | Quantity, LineTotal      |                           |
 
 ### shared.OutboxMessages, shared.ProcessedMessages, shared.IdempotencyKeys
 
-| ตาราง | คอลัมน์ | หมายเหตุ |
-|---|---|---|
-| OutboxMessages | Id uniqueidentifier | PK |
-| | Type nvarchar(100), Payload nvarchar(max) | Payload เป็น JSON |
-| | OccurredAt, ProcessedAt | index บนแถวที่ `ProcessedAt IS NULL` |
-| | Attempts int, LastError nvarchar(2000) | |
-| ProcessedMessages | MessageId, Handler | PK ร่วม; กัน handler ทำงานซ้ำ |
-| IdempotencyKeys | GuestId, [Key] nvarchar(64) | PK ร่วม |
-| | RequestHash binary(32) | SHA-256 ของ method + path + body |
-| | StatusCode int, ResponseBody nvarchar(max) | response ที่จะส่งซ้ำ |
-| | CreatedAt | ลบเมื่อเก่ากว่า 24 ชั่วโมง |
+| ตาราง             | คอลัมน์                                    | หมายเหตุ                             |
+| ----------------- | ------------------------------------------ | ------------------------------------ |
+| OutboxMessages    | Id uniqueidentifier                        | PK                                   |
+|                   | Type nvarchar(100), Payload nvarchar(max)  | Payload เป็น JSON                    |
+|                   | OccurredAt, ProcessedAt                    | index บนแถวที่ `ProcessedAt IS NULL` |
+|                   | Attempts int, LastError nvarchar(2000)     |                                      |
+| ProcessedMessages | MessageId, Handler                         | PK ร่วม; กัน handler ทำงานซ้ำ        |
+| IdempotencyKeys   | GuestId, [Key] nvarchar(64)                | PK ร่วม                              |
+|                   | RequestHash binary(32)                     | SHA-256 ของ method + path + body     |
+|                   | StatusCode int, ResponseBody nvarchar(max) | response ที่จะส่งซ้ำ                 |
+|                   | CreatedAt                                  | ลบเมื่อเก่ากว่า 24 ชั่วโมง           |
 
 ### ข้อมูล mock
 
@@ -198,20 +198,20 @@ Seed ผ่าน EF Core `HasData` ใน migration: สินค้า 12 ร�
 
 ทุกการเปลี่ยน stock เป็น `UPDATE` คำสั่งเดียวที่มีเงื่อนไขในตัว แล้วตรวจจำนวนแถวที่ถูกแก้ **ห้ามอ่านค่ามาคำนวณใน C# แล้วเขียนกลับ**
 
-| การทำงาน | SQL | ถ้าแก้ได้ 0 แถว |
-|---|---|---|
-| Reserve | `SET Reserved += @q WHERE ProductId = @id AND OnHand - Reserved >= @q` | 409 `out_of_stock` |
-| Release | `SET Reserved -= @q WHERE ProductId = @id AND Reserved >= @q` | error ภายใน, rollback |
-| Commit | `SET OnHand -= @q, Reserved -= @q WHERE ProductId = @id AND Reserved >= @q` | error ภายใน, rollback |
-| Restock | `SET OnHand += @q WHERE ProductId = @id` | error ภายใน |
+| การทำงาน | SQL                                                                         | ถ้าแก้ได้ 0 แถว       |
+| -------- | --------------------------------------------------------------------------- | --------------------- |
+| Reserve  | `SET Reserved += @q WHERE ProductId = @id AND OnHand - Reserved >= @q`      | 409 `out_of_stock`    |
+| Release  | `SET Reserved -= @q WHERE ProductId = @id AND Reserved >= @q`               | error ภายใน, rollback |
+| Commit   | `SET OnHand -= @q, Reserved -= @q WHERE ProductId = @id AND Reserved >= @q` | error ภายใน, rollback |
+| Restock  | `SET OnHand += @q WHERE ProductId = @id`                                    | error ภายใน           |
 
-| การกระทำของลูกค้า | ผล |
-|---|---|
-| เพิ่มสินค้า / เพิ่มจำนวน | Reserve ตามจำนวนที่เพิ่ม |
-| ลดจำนวน / ลบรายการ / ล้างตะกร้า | Release ตามจำนวนที่ลด |
-| ตะกร้านิ่งเกิน 15 นาที | Release ทุกรายการ แล้วลบตะกร้า |
-| ชำระเงิน | Commit ทุกรายการ |
-| ยกเลิกออเดอร์ | Restock ทุกรายการ (ผ่าน outbox) |
+| การกระทำของลูกค้า               | ผล                              |
+| ------------------------------- | ------------------------------- |
+| เพิ่มสินค้า / เพิ่มจำนวน        | Reserve ตามจำนวนที่เพิ่ม        |
+| ลดจำนวน / ลบรายการ / ล้างตะกร้า | Release ตามจำนวนที่ลด           |
+| ตะกร้านิ่งเกิน 15 นาที          | Release ทุกรายการ แล้วลบตะกร้า  |
+| ชำระเงิน                        | Commit ทุกรายการ                |
+| ยกเลิกออเดอร์                   | Restock ทุกรายการ (ผ่าน outbox) |
 
 **การกันชนกันภายในตะกร้าเดียว:** ทุกการแก้ตะกร้าเริ่มด้วยการล็อกแถวใน `cart.Carts` (`WITH (UPDLOCK, HOLDLOCK)`) ถ้ายังไม่มีแถวให้สร้าง ถ้าแถวหมดอายุแล้วให้ Release ของเดิมและเริ่มเป็นตะกร้าว่างก่อนทำงานต่อ
 
@@ -224,18 +224,18 @@ Seed ผ่าน EF Core `HasData` ใน migration: สินค้า 12 ร�
 - ตัวตน: cookie `sid` (ข้อ 11.1) endpoint ของตะกร้าและออเดอร์ออก cookie ใหม่ให้เมื่อ request ไม่มี cookie ที่ถูกต้อง ส่วน `GET /products` ไม่ใช้และไม่ออก cookie
 - Error ใช้รูปแบบ ProblemDetails (RFC 9457) และมี field `code`
 
-| Method | Path | ทำอะไร | Idempotency-Key | สำเร็จ |
-|---|---|---|---|---|
-| GET | `/products` | รายการสินค้าพร้อม `available` | — | 200 |
-| GET | `/cart` | ตะกร้าปัจจุบัน | — | 200 |
-| POST | `/cart/items` | เพิ่มสินค้า (บวกจำนวนเข้ากับของเดิม) | บังคับ | 200 |
-| PUT | `/cart/items/{productId}` | ตั้งจำนวนเป็นค่าที่ระบุ | — | 200 |
-| DELETE | `/cart/items/{productId}` | ลบรายการ | — | 200 |
-| DELETE | `/cart` | ล้างตะกร้า | — | 200 |
-| POST | `/orders` | ชำระเงิน | บังคับ | 201 |
-| GET | `/orders/{id}` | ดูออเดอร์ | — | 200 |
-| POST | `/orders/{id}/cancel` | ยกเลิกออเดอร์ | บังคับ | 200 |
-| GET | `/healthz/live`, `/healthz/ready` | health check (ไม่อยู่ใต้ `/api`) | — | 200 |
+| Method | Path                              | ทำอะไร                               | Idempotency-Key | สำเร็จ |
+| ------ | --------------------------------- | ------------------------------------ | --------------- | ------ |
+| GET    | `/products`                       | รายการสินค้าพร้อม `available`        | —               | 200    |
+| GET    | `/cart`                           | ตะกร้าปัจจุบัน                       | —               | 200    |
+| POST   | `/cart/items`                     | เพิ่มสินค้า (บวกจำนวนเข้ากับของเดิม) | บังคับ          | 200    |
+| PUT    | `/cart/items/{productId}`         | ตั้งจำนวนเป็นค่าที่ระบุ              | —               | 200    |
+| DELETE | `/cart/items/{productId}`         | ลบรายการ                             | —               | 200    |
+| DELETE | `/cart`                           | ล้างตะกร้า                           | —               | 200    |
+| POST   | `/orders`                         | ชำระเงิน                             | บังคับ          | 201    |
+| GET    | `/orders/{id}`                    | ดูออเดอร์                            | —               | 200    |
+| POST   | `/orders/{id}/cancel`             | ยกเลิกออเดอร์                        | บังคับ          | 200    |
+| GET    | `/healthz/live`, `/healthz/ready` | health check (ไม่อยู่ใต้ `/api`)     | —               | 200    |
 
 `PUT` และ `DELETE` ให้ผลเหมือนเดิมเมื่อส่งซ้ำอยู่แล้ว จึงไม่ต้องใช้ key ทุก endpoint ของตะกร้าคืนตะกร้าทั้งใบกลับมา
 
@@ -266,16 +266,16 @@ Seed ผ่าน EF Core `HasData` ใน migration: สินค้า 12 ร�
 
 **รหัส error**
 
-| HTTP | code | เมื่อไหร่ |
-|---|---|---|
-| 400 | `validation_failed` | input ผิดรูปแบบหรือเกินขอบเขต |
-| 400 | `idempotency_key_required` | ไม่ส่ง key หรือ key ผิดรูปแบบ |
-| 400 | `cart_empty` | ชำระเงินขณะตะกร้าว่าง |
-| 404 | `not_found` | ไม่พบสินค้า หรือออเดอร์ไม่ใช่ของ guest นี้ |
-| 409 | `out_of_stock` | คงเหลือไม่พอ (แนบ `available` มาด้วย) |
-| 409 | `request_in_progress` | request ที่ใช้ key เดียวกันยังทำงานไม่เสร็จ |
-| 422 | `idempotency_key_reuse` | key เดิมแต่เนื้อหา request ต่างจากเดิม |
-| 429 | `rate_limited` | เกิน rate limit |
+| HTTP | code                       | เมื่อไหร่                                   |
+| ---- | -------------------------- | ------------------------------------------- |
+| 400  | `validation_failed`        | input ผิดรูปแบบหรือเกินขอบเขต               |
+| 400  | `idempotency_key_required` | ไม่ส่ง key หรือ key ผิดรูปแบบ               |
+| 400  | `cart_empty`               | ชำระเงินขณะตะกร้าว่าง                       |
+| 404  | `not_found`                | ไม่พบสินค้า หรือออเดอร์ไม่ใช่ของ guest นี้  |
+| 409  | `out_of_stock`             | คงเหลือไม่พอ (แนบ `available` มาด้วย)       |
+| 409  | `request_in_progress`      | request ที่ใช้ key เดียวกันยังทำงานไม่เสร็จ |
+| 422  | `idempotency_key_reuse`    | key เดิมแต่เนื้อหา request ต่างจากเดิม      |
+| 429  | `rate_limited`             | เกิน rate limit                             |
 
 **การตรวจ input**
 
@@ -342,8 +342,8 @@ Frontend สร้าง key ด้วย `crypto.randomUUID()` หนึ่ง 
 
 **Event ที่มี**
 
-| Event | ผู้ส่ง | ผู้รับ | Payload |
-|---|---|---|---|
+| Event            | ผู้ส่ง   | ผู้รับ              | Payload                                   |
+| ---------------- | -------- | ------------------- | ----------------------------------------- |
 | `OrderCancelled` | Ordering | Inventory (Restock) | `orderId`, `items[{productId, quantity}]` |
 
 **Dispatcher:** `BackgroundService` ในทุก pod วนทุก 1 วินาที ประมวลผลทีละข้อความ หนึ่งข้อความต่อหนึ่ง transaction:
@@ -431,23 +431,23 @@ Frontend สร้าง key ด้วย `crypto.randomUUID()` หนึ่ง 
 
 ### 12.1 หน้า
 
-| Path | เนื้อหา |
-|---|---|
-| `/` | ตารางสินค้า + ตะกร้าแบบ drawer |
+| Path           | เนื้อหา                                              |
+| -------------- | ---------------------------------------------------- |
+| `/`            | ตารางสินค้า + ตะกร้าแบบ drawer                       |
 | `/orders/[id]` | ผลการชำระเงิน, รายการ, ยอดที่ชำระ, ปุ่มยกเลิกออเดอร์ |
 
 ### 12.2 Component
 
-| Component | พฤติกรรม |
-|---|---|
-| `ProductCard` | รูป, ชื่อ, ราคา, ป้ายคงเหลือ, ปุ่ม "ใส่ตะกร้า" |
-| `StockBadge` | คงเหลือ ≤ 5: "เหลือ N ชิ้น" สีเตือน; 0: "สินค้าหมด" และปิดปุ่ม |
-| `CartButton` | ปุ่มลอยมุมบน แสดงจำนวนชิ้นในตะกร้า |
-| `CartDrawer` | shadcn `Sheet`; เปิดเองเมื่อเพิ่มสินค้าสำเร็จ |
-| `CartLine` | ปุ่ม − / + , ปุ่มลบ, ราคารวมของรายการ; ปุ่ม + ปิดเมื่อ `available` เป็น 0 |
-| `ReservationTimer` | นับถอยหลังจาก `expiresAt`: "จองสินค้าให้คุณอีก 14:32" |
-| `CheckoutButton` | ติดอยู่ล่าง drawer เสมอ แสดงยอดในปุ่ม: "ชำระเงิน ฿2,580.00" |
-| `CartProvider` | React context เก็บตะกร้าและฟังก์ชันเรียก API |
+| Component          | พฤติกรรม                                                                  |
+| ------------------ | ------------------------------------------------------------------------- |
+| `ProductCard`      | รูป, ชื่อ, ราคา, ป้ายคงเหลือ, ปุ่ม "ใส่ตะกร้า"                            |
+| `StockBadge`       | คงเหลือ ≤ 5: "เหลือ N ชิ้น" สีเตือน; 0: "สินค้าหมด" และปิดปุ่ม            |
+| `CartButton`       | ปุ่มลอยมุมบน แสดงจำนวนชิ้นในตะกร้า                                        |
+| `CartDrawer`       | shadcn `Sheet`; เปิดเองเมื่อเพิ่มสินค้าสำเร็จ                             |
+| `CartLine`         | ปุ่ม − / + , ปุ่มลบ, ราคารวมของรายการ; ปุ่ม + ปิดเมื่อ `available` เป็น 0 |
+| `ReservationTimer` | นับถอยหลังจาก `expiresAt`: "จองสินค้าให้คุณอีก 14:32"                     |
+| `CheckoutButton`   | ติดอยู่ล่าง drawer เสมอ แสดงยอดในปุ่ม: "ชำระเงิน ฿2,580.00"               |
+| `CartProvider`     | React context เก็บตะกร้าและฟังก์ชันเรียก API                              |
 
 ### 12.3 พฤติกรรม
 
@@ -468,16 +468,16 @@ Frontend สร้าง key ด้วย `crypto.randomUUID()` หนึ่ง 
 
 Manifest อยู่ใน `deploy/k8s/` จัดการด้วย Kustomize namespace `shop`
 
-| ไฟล์ | Resource |
-|---|---|
-| `namespace.yaml` | Namespace |
-| `mssql.yaml` | StatefulSet 1 replica, PVC 5Gi, Service (ClusterIP) |
-| `migrate-job.yaml` | Job: รัน migration, seed, สร้าง login `shop_app` |
-| `api.yaml` | Deployment 3 replicas, Service, HPA 3–10 ที่ CPU 70%, PodDisruptionBudget (`minAvailable: 2`) |
-| `web.yaml` | Deployment 2 replicas, Service |
-| `ingress.yaml` | Ingress + Traefik Middleware (rate limit, headers, redirect HTTPS) |
-| `networkpolicy.yaml` | ตามข้อ 11.7 |
-| `kustomization.yaml` | รวมทุกไฟล์ + `secretGenerator` จาก `secrets.env` |
+| ไฟล์                 | Resource                                                                                      |
+| -------------------- | --------------------------------------------------------------------------------------------- |
+| `namespace.yaml`     | Namespace                                                                                     |
+| `mssql.yaml`         | StatefulSet 1 replica, PVC 5Gi, Service (ClusterIP)                                           |
+| `migrate-job.yaml`   | Job: รัน migration, seed, สร้าง login `shop_app`                                              |
+| `api.yaml`           | Deployment 3 replicas, Service, HPA 3–10 ที่ CPU 70%, PodDisruptionBudget (`minAvailable: 2`) |
+| `web.yaml`           | Deployment 2 replicas, Service                                                                |
+| `ingress.yaml`       | Ingress + Traefik Middleware (rate limit, headers, redirect HTTPS)                            |
+| `networkpolicy.yaml` | ตามข้อ 11.7                                                                                   |
+| `kustomization.yaml` | รวมทุกไฟล์ + `secretGenerator` จาก `secrets.env`                                              |
 
 - **Migration:** image เดียวกับ `api` เรียกด้วย argument `migrate` แล้วจบการทำงาน Pod `api` **ไม่** รัน migration ตอนเริ่ม
 - **Probe:** `readinessProbe` ที่ `/healthz/ready` (ตรวจการเชื่อมต่อฐานข้อมูล), `livenessProbe` ที่ `/healthz/live`
@@ -486,22 +486,22 @@ Manifest อยู่ใน `deploy/k8s/` จัดการด้วย Kustomi
 
 **ข้อจำกัดบน Kubernetes ของ Docker Desktop**
 
-| เรื่อง | สถานะ |
-|---|---|
-| Traefik | ต้องติดตั้งเองก่อน (Helm) |
-| HPA | ต้องติดตั้ง metrics-server ไม่เช่นนั้น HPA ไม่มีตัวเลขให้ใช้ |
+| เรื่อง        | สถานะ                                                                                           |
+| ------------- | ----------------------------------------------------------------------------------------------- |
+| Traefik       | ต้องติดตั้งเองก่อน (Helm)                                                                       |
+| HPA           | ต้องติดตั้ง metrics-server ไม่เช่นนั้น HPA ไม่มีตัวเลขให้ใช้                                    |
 | NetworkPolicy | CNI ที่มากับ Docker Desktop ไม่บังคับใช้ manifest ถูกต้องแต่จะมีผลจริงบน cluster ที่ CNI รองรับ |
-| TLS | ใช้ใบรับรอง self-signed กับ host `shop.localhost` |
+| TLS           | ใช้ใบรับรอง self-signed กับ host `shop.localhost`                                               |
 
 **ฐานข้อมูลใน production:** SQL Server หนึ่ง replica ใน cluster เหมาะกับ dev และ demo ใน production ควรใช้บริการฐานข้อมูลแบบ managed หรือ Always On availability group แล้วชี้ connection string ไปที่นั่น
 
 ## 14. การรันในเครื่อง
 
-| โหมด | คำสั่ง | ใช้เมื่อ |
-|---|---|---|
-| Dev | `docker compose up mssql` แล้ว `dotnet run` ใน `backend/src/Shop.Api` และ `npm run dev` ใน `frontend` | เขียนโค้ด |
-| Compose ทั้งชุด | `docker compose up --build` | ลองทั้งระบบโดยไม่ใช้ Kubernetes |
-| Kubernetes | build image สองตัว แล้ว `kubectl apply -k deploy/k8s` | ทดสอบ deploy จริง |
+| โหมด            | คำสั่ง                                                                                                | ใช้เมื่อ                        |
+| --------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------- |
+| Dev             | `docker compose up mssql` แล้ว `dotnet run` ใน `backend/src/Shop.Api` และ `npm run dev` ใน `frontend` | เขียนโค้ด                       |
+| Compose ทั้งชุด | `docker compose up --build`                                                                           | ลองทั้งระบบโดยไม่ใช้ Kubernetes |
+| Kubernetes      | build image สองตัว แล้ว `kubectl apply -k deploy/k8s`                                                 | ทดสอบ deploy จริง               |
 
 ค่าที่ตั้งได้ผ่าน environment variable: `ConnectionStrings__Shop`, `CART_SIGNING_KEY`, `Cart__ReservationMinutes` (ค่าเริ่มต้น 15), `API_ORIGIN` (ฝั่ง frontend, ทุกสภาพแวดล้อม)
 
@@ -509,21 +509,21 @@ Manifest อยู่ใน `deploy/k8s/` จัดการด้วย Kustomi
 
 Integration test รันกับ SQL Server จริงผ่าน Testcontainers เพราะพฤติกรรมเรื่อง lock และ transaction ทดสอบด้วย mock ไม่ได้
 
-| # | กรณี | ผลที่ต้องได้ |
-|---|---|---|
-| 1 | Guest 50 คนเพิ่มสินค้าที่เหลือ 5 ชิ้นพร้อมกัน | สำเร็จ 5 คน, ที่เหลือได้ 409, `Reserved` = 5 |
-| 2 | ชำระเงินด้วย key เดียวกัน 10 ครั้งพร้อมกัน | มีออเดอร์เดียว, stock ถูกตัดครั้งเดียว, ทุก response เหมือนกัน |
-| 3 | ใช้ key เดิมกับ body ที่ต่างกัน | 422 |
-| 4 | ยกเลิกออเดอร์เดียวกันสองครั้ง และ dispatcher สองตัวทำงานพร้อมกัน | `OnHand` กลับคืนครั้งเดียว |
-| 5 | เพิ่ม ลด ลบ ล้างตะกร้า | `Reserved` ตรงกับผลรวมของตะกร้าทุกใบเสมอ |
-| 6 | ตะกร้าหมดอายุ | ตัวกวาดคืน `Reserved` และลบตะกร้า |
-| 7 | Guest A ขอดูหรือยกเลิกออเดอร์ของ guest B | 404 |
-| 8 | Cookie ที่ถูกแก้ลายเซ็น | ได้ guest ใหม่ ไม่เห็นตะกร้าเดิม |
-| 9 | `quantity` เป็น 0, ติดลบ, 100, หรือไม่ใช่ตัวเลข | 400 |
-| 10 | ชำระเงินขณะตะกร้าว่าง | 400 `cart_empty` |
-| 11 | ส่ง payload SQL injection (`1; DROP TABLE ...`, `' OR 1=1--`) ใน path, body, และ `Idempotency-Key` | 400 หรือ 404, ตารางและข้อมูลไม่เปลี่ยน |
-| 12 | สินค้าที่ชื่อมี `<script>alert(1)</script>` (ใส่ตรงในฐานข้อมูลทดสอบ) | API คืนเป็นข้อความใน JSON, หน้าเว็บแสดงเป็นตัวอักษร สคริปต์ไม่ทำงาน |
-| 13 | ตรวจ response header ของหน้าเว็บและ API | มี CSP ที่ `script-src` ไม่มี `unsafe-inline` และ `unsafe-eval`, มี `nosniff` และ HSTS |
+| #   | กรณี                                                                                               | ผลที่ต้องได้                                                                           |
+| --- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| 1   | Guest 50 คนเพิ่มสินค้าที่เหลือ 5 ชิ้นพร้อมกัน                                                      | สำเร็จ 5 คน, ที่เหลือได้ 409, `Reserved` = 5                                           |
+| 2   | ชำระเงินด้วย key เดียวกัน 10 ครั้งพร้อมกัน                                                         | มีออเดอร์เดียว, stock ถูกตัดครั้งเดียว, ทุก response เหมือนกัน                         |
+| 3   | ใช้ key เดิมกับ body ที่ต่างกัน                                                                    | 422                                                                                    |
+| 4   | ยกเลิกออเดอร์เดียวกันสองครั้ง และ dispatcher สองตัวทำงานพร้อมกัน                                   | `OnHand` กลับคืนครั้งเดียว                                                             |
+| 5   | เพิ่ม ลด ลบ ล้างตะกร้า                                                                             | `Reserved` ตรงกับผลรวมของตะกร้าทุกใบเสมอ                                               |
+| 6   | ตะกร้าหมดอายุ                                                                                      | ตัวกวาดคืน `Reserved` และลบตะกร้า                                                      |
+| 7   | Guest A ขอดูหรือยกเลิกออเดอร์ของ guest B                                                           | 404                                                                                    |
+| 8   | Cookie ที่ถูกแก้ลายเซ็น                                                                            | ได้ guest ใหม่ ไม่เห็นตะกร้าเดิม                                                       |
+| 9   | `quantity` เป็น 0, ติดลบ, 100, หรือไม่ใช่ตัวเลข                                                    | 400                                                                                    |
+| 10  | ชำระเงินขณะตะกร้าว่าง                                                                              | 400 `cart_empty`                                                                       |
+| 11  | ส่ง payload SQL injection (`1; DROP TABLE ...`, `' OR 1=1--`) ใน path, body, และ `Idempotency-Key` | 400 หรือ 404, ตารางและข้อมูลไม่เปลี่ยน                                                 |
+| 12  | สินค้าที่ชื่อมี `<script>alert(1)</script>` (ใส่ตรงในฐานข้อมูลทดสอบ)                               | API คืนเป็นข้อความใน JSON, หน้าเว็บแสดงเป็นตัวอักษร สคริปต์ไม่ทำงาน                    |
+| 13  | ตรวจ response header ของหน้าเว็บและ API                                                            | มี CSP ที่ `script-src` ไม่มี `unsafe-inline` และ `unsafe-eval`, มี `nosniff` และ HSTS |
 
 **ตรวจโค้ดอัตโนมัติ:** build ล้มเหลวถ้าพบ `ExecuteSqlRaw`, `FromSqlRaw`, หรือ `dangerouslySetInnerHTML` ในซอร์ส (ตรวจด้วย `git grep` ใน test หนึ่งตัว)
 
@@ -535,11 +535,11 @@ Integration test รันกับ SQL Server จริงผ่าน Testcont
 
 ## 16. สิ่งที่ตั้งใจไม่ทำ และควรทำเมื่อไหร่
 
-| ไม่ทำ | ทำเมื่อ |
-|---|---|
-| Message broker | แยกโมดูลออกเป็น service จริง |
+| ไม่ทำ                              | ทำเมื่อ                                                              |
+| ---------------------------------- | -------------------------------------------------------------------- |
+| Message broker                     | แยกโมดูลออกเป็น service จริง                                         |
 | Redis สำหรับ rate limit หรือ cache | ต้องการเพดาน rate limit ที่แม่นยำข้าม pod หรือ SQL รับโหลดอ่านไม่ไหว |
-| OpenTelemetry, dashboard | ก่อนขึ้น production |
-| Playwright e2e | เมื่อหน้าเว็บมีมากกว่าสองหน้า |
-| ระบบสมาชิก | ต้องการประวัติการสั่งซื้อข้ามอุปกรณ์ |
-| CI/CD pipeline | เมื่อมี remote repository |
+| OpenTelemetry, dashboard           | ก่อนขึ้น production                                                  |
+| Playwright e2e                     | เมื่อหน้าเว็บมีมากกว่าสองหน้า                                        |
+| ระบบสมาชิก                         | ต้องการประวัติการสั่งซื้อข้ามอุปกรณ์                                 |
+| CI/CD pipeline                     | เมื่อมี remote repository                                            |
