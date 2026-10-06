@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: shop
+  labels:
+    # Warn when a pod does not meet the restricted security profile.
+    pod-security.kubernetes.io/warn: restricted

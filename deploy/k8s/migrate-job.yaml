@@ -1,0 +1,41 @@
+# Creates/updates the schema, seeds the mock products and creates the least-privilege login "shop_app".
+# Runs as its own Job so that API pods never migrate on startup (several replicas would race).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate
+  labels: { app.kubernetes.io/name: migrate }
+spec:
+  backoffLimit: 6               # SQL Server may still be starting on the first attempts
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: migrate }
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: migrate
+          image: shop-api:local
+          imagePullPolicy: IfNotPresent
+          args: ["migrate"]
+          env:
+            - name: MSSQL_SA_PASSWORD
+              valueFrom: { secretKeyRef: { name: shop-secrets, key: MSSQL_SA_PASSWORD } }
+            - name: APP_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: shop-secrets, key: APP_DB_PASSWORD } }
+            - name: ConnectionStrings__Shop
+              value: "Server=mssql.shop.svc,1433;Database=Shop;User Id=sa;Password=$(MSSQL_SA_PASSWORD);Encrypt=True;TrustServerCertificate=True"
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 512Mi }
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - { name: tmp, emptyDir: {} }

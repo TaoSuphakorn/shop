@@ -1,0 +1,95 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  labels: { app.kubernetes.io/name: api }
+spec:
+  selector: { app.kubernetes.io/name: api }
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  labels: { app.kubernetes.io/name: api }
+spec:
+  replicas: 3
+  selector:
+    matchLabels: { app.kubernetes.io/name: api }
+  strategy:
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: api }
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      # Spread replicas over nodes so one node failure cannot take the API down.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app.kubernetes.io/name: api }
+      containers:
+        - name: api
+          image: shop-api:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: http, containerPort: 8080 }
+          env:
+            - name: APP_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: shop-secrets, key: APP_DB_PASSWORD } }
+            - name: CART_SIGNING_KEY
+              valueFrom: { secretKeyRef: { name: shop-secrets, key: CART_SIGNING_KEY } }
+            # Least-privilege login; the API never connects as sa.
+            # TrustServerCertificate is acceptable only for this in-cluster demo database (spec 11.4).
+            - name: ConnectionStrings__Shop
+              value: "Server=mssql.shop.svc,1433;Database=Shop;User Id=shop_app;Password=$(APP_DB_PASSWORD);Encrypt=True;TrustServerCertificate=True"
+            - { name: Kafka__BootstrapServers, value: "kafka.shop.svc:9092" }
+            # Believe X-Forwarded-For only from in-cluster proxies (Traefik). Adjust to your pod CIDR.
+            - { name: ForwardedHeaders__KnownNetworks, value: "10.0.0.0/8" }
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+          readinessProbe:
+            httpGet: { path: /healthz/ready, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz/live, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - { name: tmp, emptyDir: {} }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: api }
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: api
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels: { app.kubernetes.io/name: api }

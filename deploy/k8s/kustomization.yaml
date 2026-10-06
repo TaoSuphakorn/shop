@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: shop
+resources:
+  - namespace.yaml
+  - mssql.yaml
+  - kafka.yaml
+  - migrate-job.yaml
+  - api.yaml
+  - web.yaml
+  - ingress.yaml
+  - networkpolicy.yaml
+secretGenerator:
+  # secrets.env is git-ignored. Copy secrets.example.env and fill it in.
+  - name: shop-secrets
+    envs: [secrets.env]
+generatorOptions:
+  disableNameSuffixHash: true
