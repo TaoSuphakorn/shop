@@ -2,6 +2,51 @@
 
 ร้านค้าออนไลน์ที่ลูกค้าเลือกสินค้า ใส่ตะกร้า ชำระเงิน และยกเลิกออเดอร์ได้ โดยสต๊อกถูกต้องเสมอแม้มี request พร้อมกันจำนวนมาก
 
+## เริ่มใช้งาน: clone แล้วรันคำสั่งเดียว
+
+ต้องมีแค่ [Docker Desktop](https://www.docker.com/products/docker-desktop/) ที่เปิดอยู่ ไม่ต้องติดตั้ง .NET หรือ Node
+
+```bash
+git clone -b feat/shopping-cart <ที่อยู่ repo> tnc-store
+```
+
+```bash
+cd tnc-store
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/up.ps1
+```
+
+เมื่อขึ้นข้อความ `Ready: http://localhost:3000` ให้เปิด http://localhost:3000 ได้เลย ครั้งแรกใช้เวลาหลายนาทีเพราะต้องดาวน์โหลด image ของ SQL Server และ Kafka
+
+> ตัวเลือก `-b feat/shopping-cart` จำเป็นตราบที่โค้ดยังไม่ถูก merge เข้า `main` หลัง merge แล้วให้เอาออกจากคำสั่งและลบบรรทัดนี้ทิ้ง
+
+**สิ่งที่คำสั่งนี้ทำ**
+
+1. สร้างไฟล์ `.env` พร้อมรหัสผ่านแบบสุ่ม เฉพาะเมื่อยังไม่มีไฟล์นี้ (ถ้ามีอยู่แล้วจะไม่แก้)
+2. build image ของ API และเว็บ
+3. รัน SQL Server และ Kafka สร้างตาราง ใส่ข้อมูลสินค้าตัวอย่าง 12 รายการ แล้วรัน API กับเว็บ
+4. รอจนระบบตอบได้จริง แล้วแจ้งที่อยู่ของหน้าเว็บ
+
+**คำสั่งที่ใช้บ่อยหลังจากนั้น**
+
+| ต้องการ | คำสั่ง |
+|---|---|
+| หยุดระบบ (ข้อมูลยังอยู่) | `docker compose --profile app down` |
+| เริ่มใหม่หลังแก้โค้ด | รัน `scripts/up.ps1` ซ้ำ |
+| ดู log | `docker compose --profile app logs -f api web` |
+| ล้างทุกอย่างรวมถึงข้อมูลในฐานข้อมูล | `docker compose --profile app down -v` |
+
+**ถ้าไม่สำเร็จ**
+
+| อาการ | สาเหตุและวิธีแก้ |
+|---|---|
+| `docker compose failed. Is Docker Desktop running?` | เปิด Docker Desktop แล้วรอจนพร้อม จากนั้นรันใหม่ |
+| ขั้นตอน `migrate` ล้มด้วย `Login failed for user 'sa'` | ไฟล์ `.env` ถูกสร้างใหม่ แต่ฐานข้อมูลเดิมยังใช้รหัสผ่านเก่า ใช้ `docker compose --profile app down -v` แล้วรันใหม่ (ข้อมูลเดิมจะหาย) |
+| port 3000 ถูกใช้อยู่ | ปิดโปรแกรมที่ใช้ port 3000 หรือแก้เลข port ฝั่งซ้ายของ `127.0.0.1:3000:3000` ใน `docker-compose.yml` |
+| ใช้ macOS หรือ Linux | สคริปต์นี้เป็น PowerShell สำหรับ Windows ให้ทำตามหัวข้อ "วิธีรัน" ข้อ 1 แทน |
+
 | ส่วน | เทคโนโลยี |
 |---|---|
 | Frontend | Next.js 16 (App Router), Tailwind CSS, shadcn/ui |
@@ -28,20 +73,6 @@ scripts/    ตัวช่วยรัน API ตอนพัฒนา
 
 - Docker Desktop
 - .NET SDK 10 และ Node.js 22 (เฉพาะเมื่อพัฒนาหรือรัน test)
-
-## เริ่มใช้งานในคำสั่งเดียว
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts/up.ps1
-```
-
-สคริปต์นี้สร้างไฟล์ `.env` พร้อมรหัสผ่านแบบสุ่มให้ (เฉพาะครั้งแรก) build image ทั้งหมด รันทั้งระบบ รอจนพร้อม แล้วบอกให้เปิด http://localhost:3000
-
-หยุดระบบ:
-
-```bash
-docker compose --profile app down
-```
 
 ## วิธีรัน
 
